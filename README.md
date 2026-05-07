@@ -20,21 +20,164 @@ Local proxy that lets the **latest OpenAI Codex CLI** and **Codex desktop app** 
 - ✅ 1M context — pass `mimo-v2.5-pro[1m]` as the model
 - ✅ **cc-switch integration** — `mimo2codex print-cc-switch` outputs the auth.json + config.toml snippets you paste into cc-switch's "Add Provider → Codex → Custom" dialog
 
-## Install
+## Run from source (recommended)
+
+> The npm package isn't published yet — clone the repo and run locally.
+
+### 0. Prerequisites
+
+| Tool | Required | Check |
+|---|---|---|
+| Node.js | **≥ 18** | `node -v` |
+| npm | bundled with Node | `npm -v` |
+| git | any | `git --version` |
+
+If `node -v` is missing or below 18, grab an LTS from [nodejs.org](https://nodejs.org). Windows users can also use [nvs](https://github.com/jasongin/nvs) or [nvm-windows](https://github.com/coreybutler/nvm-windows).
+
+### 1. Clone & install dependencies
 
 ```bash
-npm install -g mimo2codex
+git clone https://github.com/your-org/mimo2codex.git
+cd mimo2codex
+npm install
 ```
 
-Requires Node.js 18+.
+Installs ~87 packages (typescript, vitest, tsx, nanoid, eventsource-parser); takes 30–60s.
 
-## Use
+### 2. Pick a run mode
 
-### 1. Get a MiMo API key
+#### Mode A — dev mode (no build, fastest to try)
+
+Runs the TypeScript directly via `tsx`:
+
+```bash
+# Linux / macOS / Git Bash
+export MIMO_API_KEY=sk-xxxxxxxxxxxxxxxx
+npm run dev
+
+# Windows PowerShell
+$env:MIMO_API_KEY="sk-xxxxxxxxxxxxxxxx"
+npm run dev
+
+# Windows CMD
+set MIMO_API_KEY=sk-xxxxxxxxxxxxxxxx
+npm run dev
+```
+
+Pass extra flags after `--`:
+
+```bash
+npm run dev -- --port 9000
+npm run dev -- --base-url https://token-plan-cn.xiaomimimo.com/v1
+npm run dev -- print-cc-switch
+```
+
+#### Mode B — build then run (lowest runtime overhead)
+
+Compiles to plain JS, runs with vanilla Node — startup < 100ms, no tsx in process:
+
+```bash
+npm run build           # one-time
+npm start               # or: node dist/cli.js
+npm start -- --port 9000
+node dist/cli.js print-cc-switch
+```
+
+`dist/` is git-ignored. Re-run `npm run build` after editing source.
+
+#### Mode C — register `mimo2codex` as a global command (no publish needed)
+
+```bash
+npm run build
+npm link
+```
+
+Then from any directory:
+
+```bash
+mimo2codex --version
+mimo2codex print-cc-switch
+MIMO_API_KEY=sk-xxx mimo2codex
+```
+
+To undo: `npm unlink` in the repo, or `npm rm -g mimo2codex` globally.
+
+> Throughout the rest of this README, `mimo2codex …` means whichever invocation matches your mode: `npm run dev -- …` (A), `node dist/cli.js …` (B), or `mimo2codex …` (C).
+
+### 3. Run the tests (optional)
+
+```bash
+npm test
+```
+
+Expect 25 passing across 3 files.
+
+### 4. Keep the proxy running in the background
+
+#### macOS / Linux — systemd user unit
+
+Create `~/.config/systemd/user/mimo2codex.service`:
+
+```ini
+[Unit]
+Description=mimo2codex — Codex Responses → Xiaomi MiMo proxy
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/absolute/path/to/mimo2codex
+Environment="MIMO_API_KEY=sk-xxxxxxxxxxxxxxxx"
+ExecStart=/usr/bin/node dist/cli.js
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now mimo2codex
+journalctl --user -u mimo2codex -f
+```
+
+#### Cross-platform — pm2
+
+```bash
+npm install -g pm2
+cd mimo2codex && npm run build
+MIMO_API_KEY=sk-xxx pm2 start dist/cli.js --name mimo2codex
+pm2 save && pm2 startup
+```
+
+#### Windows — Task Scheduler
+
+1. Task Scheduler → Create Basic Task
+2. Trigger: At log on
+3. Action: Start a program
+   - Program: `C:\Program Files\nodejs\node.exe`
+   - Arguments: `D:\path\to\mimo2codex\dist\cli.js`
+   - Start in: `D:\path\to\mimo2codex`
+4. Set `MIMO_API_KEY` in the task's environment, or globally in System Properties → Environment Variables
+
+### 5. Updating
+
+```bash
+cd mimo2codex
+git pull
+npm install        # only if dependencies changed
+npm run build      # required for Mode B/C
+# restart your background process
+```
+
+---
+
+## Get a MiMo API key
 
 Sign up at [platform.xiaomimimo.com](https://platform.xiaomimimo.com), create a key in **Console → API Keys**. Either pay-as-you-go (`sk-xxx`) or token-plan (`tp-xxx`) works.
 
-### 2. Start the proxy
+## Use
+
+### 1. Start the proxy
 
 ```bash
 export MIMO_API_KEY=sk-xxxxxxxxxxxxxxxx
@@ -61,7 +204,7 @@ env_key = "MIMO2CODEX_KEY"
 request_max_retries = 1
 ```
 
-### 3. Configure Codex
+### 2. Configure Codex
 
 Copy that snippet into `~/.codex/config.toml` (Windows: `%USERPROFILE%\.codex\config.toml`), and export any non-empty value as `MIMO2CODEX_KEY` — Codex requires an env_key to be set, but the proxy doesn't validate it (your real MiMo key is what mimo2codex uses upstream):
 
@@ -75,7 +218,7 @@ On Windows (CMD):
 setx MIMO2CODEX_KEY anything
 ```
 
-### 4. Run Codex
+### 3. Run Codex
 
 ```bash
 codex
@@ -167,14 +310,29 @@ No. Even with `--no-reasoning` the proxy still receives and stores `reasoning_co
 **Why not just patch Codex to accept the chat wire?**
 That works for the CLI today (downgrade to 0.80.0), but you lose pets, the new desktop release, and any future improvements. A protocol shim is a smaller, longer-lived fix.
 
-## Development
+**How do I see what the proxy is doing?**
+Start with `--verbose` (or `MIMO2CODEX_VERBOSE=1`). Each upstream POST is logged to stderr with model, message count, tool count, stream flag, and a redacted key. No request bodies are logged.
 
-```bash
-git clone … && cd mimo2codex
-npm install
-npm run dev          # runs src/cli.ts via tsx
-npm test             # vitest
-npm run build        # produces dist/
+## Project layout
+
+```
+mimo2codex/
+├── src/
+│   ├── cli.ts                    # entry: argv, server boot, snippet printing
+│   ├── server.ts                 # node:http server, routes /v1/responses, /v1/models, /healthz
+│   ├── config.ts                 # env + flag merge
+│   ├── upstream/
+│   │   ├── mimoClient.ts         # fetch wrapper (retry, error normalization)
+│   │   └── chatStream.ts         # upstream Chat SSE → ChatStreamChunk async iterator
+│   ├── translate/
+│   │   ├── types.ts              # Responses + ChatCompletions types
+│   │   ├── reqToChat.ts          # request-direction translator
+│   │   ├── respToResponses.ts    # non-stream response translator
+│   │   └── streamToSse.ts        # streaming state machine
+│   └── util/{ids,sse,log}.ts
+├── test/                          # 25 vitest tests
+├── dist/                          # tsc output (generated)
+├── package.json / tsconfig.json / vitest.config.ts
 ```
 
 ## License

@@ -60,13 +60,191 @@
 
 ---
 
-## 安装
+## 安装与启动（本地源码运行）
 
-需要 Node.js 18+。
+> 本节假设你**没有**通过 `npm install -g` 安装包，而是 git clone 仓库后在本地直接运行。这是当前推荐的方式。
+
+### 0. 先决条件
+
+| 软件 | 版本要求 | 检查命令 |
+|---|---|---|
+| Node.js | **≥ 18.0** | `node -v` |
+| npm | 与 Node 同包 | `npm -v` |
+| git | 任意版本 | `git --version` |
+
+如果 `node -v` 报错或版本不到 18，去 [nodejs.org](https://nodejs.org) 装一个 LTS。Windows 用户也可以用 [nvs](https://github.com/jasongin/nvs) / [nvm-windows](https://github.com/coreybutler/nvm-windows) 管理多版本。
+
+### 1. 克隆仓库 & 装依赖
 
 ```bash
-npm install -g mimo2codex
+git clone https://github.com/your-org/mimo2codex.git
+cd mimo2codex
+npm install
 ```
+
+`npm install` 会装大约 87 个包（typescript、vitest、tsx、nanoid、eventsource-parser），耗时 30 秒到 1 分钟。
+
+### 2. 选一种启动方式
+
+下面三种任选其一。**A** 是最快上手的；**B** 启动最快、运行时占用最低；**C** 让 `mimo2codex` 像全局命令一样使用。
+
+#### 方式 A：开发模式（推荐首次试用）
+
+直接用 `tsx` 跑 TypeScript 源码，**不需要构建**：
+
+```bash
+# Linux / macOS / Git Bash
+export MIMO_API_KEY=sk-xxxxxxxxxxxxxxxx
+npm run dev
+
+# Windows PowerShell
+$env:MIMO_API_KEY="sk-xxxxxxxxxxxxxxxx"
+npm run dev
+
+# Windows CMD
+set MIMO_API_KEY=sk-xxxxxxxxxxxxxxxx
+npm run dev
+```
+
+要带额外参数（例如改端口）：
+
+```bash
+npm run dev -- --port 9000
+npm run dev -- --base-url https://token-plan-cn.xiaomimimo.com/v1
+npm run dev -- print-cc-switch
+```
+
+> ⚠️ 注意 `--` 分隔符：`--` 前面是给 npm 的参数，后面才是给 mimo2codex 的。
+
+#### 方式 B：构建后跑（推荐长期使用）
+
+把 TypeScript 编译成 JavaScript，再用纯 Node 跑——启动快（< 100ms）、内存占用低、没有 tsx 的额外开销：
+
+```bash
+# 一次性构建
+npm run build
+
+# 启动（任选其一）
+npm start
+node dist/cli.js
+```
+
+带参数：
+
+```bash
+npm start -- --port 9000
+node dist/cli.js --port 9000
+node dist/cli.js print-cc-switch
+```
+
+构建产物在 `dist/`（已在 `.gitignore` 里，不会污染仓库）。改了源码记得重新 `npm run build`。
+
+#### 方式 C：把 `mimo2codex` 注册为全局命令（不需要 publish）
+
+在仓库根目录跑一次：
+
+```bash
+npm run build      # 先确保 dist/ 已生成
+npm link           # 把当前目录注册为全局 mimo2codex
+```
+
+之后在**任何目录**都能直接用：
+
+```bash
+mimo2codex --version
+mimo2codex print-cc-switch
+MIMO_API_KEY=sk-xxx mimo2codex
+```
+
+要解除链接：在仓库根目录跑 `npm unlink`，或全局 `npm rm -g mimo2codex`。
+
+> 💡 后文所有的 `mimo2codex ...` 命令示例，对应到方式 A 是 `npm run dev -- ...`、方式 B 是 `node dist/cli.js ...`、方式 C 是 `mimo2codex ...` 直接用。
+
+### 3. 跑测试（可选）
+
+确认你这台机器上一切正常：
+
+```bash
+npm test
+```
+
+预期 25 个用例全过：
+
+```
+ ✓ test/respToResponses.test.ts (6 tests)
+ ✓ test/reqToChat.test.ts (11 tests)
+ ✓ test/streamToSse.test.ts (8 tests)
+
+ Test Files  3 passed (3)
+      Tests  25 passed (25)
+```
+
+### 4. 让代理常驻后台
+
+mimo2codex 是个长时运行的服务，开发时直接前台跑就行；如果想常驻：
+
+#### macOS / Linux：systemd 用户单元（推荐）
+
+新建 `~/.config/systemd/user/mimo2codex.service`：
+
+```ini
+[Unit]
+Description=mimo2codex — Codex Responses → Xiaomi MiMo proxy
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/绝对路径/到/mimo2codex
+Environment="MIMO_API_KEY=sk-xxxxxxxxxxxxxxxx"
+ExecStart=/usr/bin/node dist/cli.js
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now mimo2codex
+systemctl --user status mimo2codex     # 看状态
+journalctl --user -u mimo2codex -f      # 看日志
+```
+
+#### 跨平台：[pm2](https://pm2.keymetrics.io)
+
+```bash
+npm install -g pm2
+cd mimo2codex
+npm run build
+MIMO_API_KEY=sk-xxx pm2 start dist/cli.js --name mimo2codex
+pm2 save
+pm2 startup    # 跟着提示开机自启
+```
+
+#### Windows：[node-windows](https://github.com/coreybutler/node-windows) 或任务计划程序
+
+最省事的方法是**任务计划程序**：
+
+1. 控制面板 → 任务计划程序 → 创建基本任务
+2. 触发器：登录时
+3. 操作：启动程序
+   - 程序：`C:\Program Files\nodejs\node.exe`
+   - 参数：`D:\workspace\goproject\my\mimo2codex\dist\cli.js`
+   - 起始位置：`D:\workspace\goproject\my\mimo2codex`
+4. 完成后右键任务 → 属性 → 设置「使用最高权限运行」可选；在「条件」/「设置」里关掉空闲限制
+5. 在「环境变量」里把 `MIMO_API_KEY` 设上（或在系统属性 → 环境变量里全局设）
+
+### 5. 升级到新版本
+
+```bash
+cd mimo2codex
+git pull
+npm install            # 拉了新依赖才需要
+npm run build          # 方式 B/C 必跑；方式 A 不用
+# 重启你的常驻进程（systemctl restart / pm2 restart 等）
+```
+
+---
 
 ## 准备：拿一个 MiMo API Key
 
@@ -296,16 +474,48 @@ A：**不会。** 它只在 127.0.0.1 监听，假设你的本机是可信的。
 
 如果担心本机有恶意进程，请确保只 bind `127.0.0.1`（默认就是）。
 
----
+**Q：怎么看代理在干嘛？**
 
-## 开发
+A：启动时加 `--verbose`（或设环境变量 `MIMO2CODEX_VERBOSE=1`）：
 
 ```bash
-git clone … && cd mimo2codex
-npm install
-npm run dev          # tsx 直接跑 src/cli.ts
-npm test             # vitest 跑 25 个单测
-npm run build        # 输出 dist/
+# 方式 A
+npm run dev -- --verbose
+# 方式 B
+node dist/cli.js --verbose
+# 方式 C
+mimo2codex --verbose
+```
+
+会在 stderr 打印每次的上游 POST、模型名、消息数、工具数、流式与否。API Key 会被脱敏成 `sk-x…xxxx`。
+
+---
+
+## 项目结构
+
+```
+mimo2codex/
+├── src/
+│   ├── cli.ts                    # 入口：argv 解析、启动 server、打印片段
+│   ├── server.ts                 # node:http server，路由 /v1/responses、/v1/models、/healthz
+│   ├── config.ts                 # env + flags 合并
+│   ├── upstream/
+│   │   ├── mimoClient.ts         # 调上游 fetch 包装（重试 / 错误归一化）
+│   │   └── chatStream.ts         # 上游 Chat SSE → ChatStreamChunk 异步迭代器
+│   ├── translate/
+│   │   ├── types.ts              # Responses + ChatCompletions 类型定义
+│   │   ├── reqToChat.ts          # 请求方向翻译
+│   │   ├── respToResponses.ts    # 非流式响应翻译
+│   │   └── streamToSse.ts        # 流式响应状态机
+│   └── util/
+│       ├── ids.ts                # resp_*, msg_*, fc_*, rs_* id 生成
+│       ├── sse.ts                # SSE 写入 / 测试用 in-memory sink
+│       └── log.ts                # debug/info/warn/error + 脱敏
+├── test/                          # 25 个 vitest 单测
+├── dist/                          # tsc 输出（构建后产生）
+├── package.json
+├── tsconfig.json
+└── vitest.config.ts
 ```
 
 ## 许可证
