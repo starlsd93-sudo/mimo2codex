@@ -346,7 +346,39 @@ function inputItemsToMessages(
     pendingAssistantText: null,
   };
 
-  for (const item of items) {
+  for (const rawItem of items) {
+    // Compatibility with Chat-Completions-shaped probes (cc-switch test
+    // connection, raw OpenAI SDK requests sent at the wrong endpoint, etc.):
+    // `{role, content: string}` with NO `type` field. Real Codex always sends
+    // `{type: "message", role, content: [...]}`. Promote the simple shape to
+    // a message item so we don't silently drop it and produce empty messages.
+    let item: ResponsesInputItem = rawItem;
+    if (item && typeof item === "object" && !("type" in item)) {
+      const legacy = item as unknown as { role?: string; content?: unknown };
+      if (typeof legacy.role === "string") {
+        const text =
+          typeof legacy.content === "string"
+            ? legacy.content
+            : Array.isArray(legacy.content)
+              ? legacy.content
+                  .map((p: unknown) => {
+                    if (typeof p === "string") return p;
+                    if (p && typeof p === "object" && "text" in p)
+                      return String((p as { text: unknown }).text ?? "");
+                    return "";
+                  })
+                  .join("")
+              : "";
+        item = {
+          type: "message",
+          role: legacy.role as "user" | "system" | "developer" | "assistant",
+          content: [
+            { type: legacy.role === "assistant" ? "output_text" : "input_text", text },
+          ],
+        } as ResponsesInputItem;
+      }
+    }
+
     switch (item.type) {
       case "message": {
         if (item.role === "assistant") {

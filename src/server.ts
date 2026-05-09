@@ -86,6 +86,27 @@ async function handleResponses(
     );
   }
 
+  log.debug("incoming POST /v1/responses", {
+    model: payload.model,
+    stream: !!payload.stream,
+    hasInput: Array.isArray(payload.input) ? payload.input.length : "n/a",
+    hasInstructions: typeof payload.instructions === "string" ? payload.instructions.length : 0,
+    keys: Object.keys(payload),
+  });
+  log.debug("incoming POST /v1/responses raw body", payload);
+
+  // Health-check probe short-circuit. Tools like cc-switch's "test connection"
+  // send POST /v1/responses with just `{model, stream}` and no input — our
+  // translation would forward `messages: []` to MiMo, which 400s. Detect the
+  // probe shape (no input, no instructions) and answer with a synthetic 200
+  // without burning an upstream call.
+  const hasInput = Array.isArray(payload.input) && payload.input.length > 0;
+  const hasInstructions = typeof payload.instructions === "string" && payload.instructions.length > 0;
+  if (!hasInput && !hasInstructions) {
+    log.debug("matched probe shape — returning synthetic 200 without upstream call");
+    return respondToResponsesProbe(payload, res, !!payload.stream);
+  }
+
   // mimo2codex applies two default-on behaviors that compensate for MiMo's
   // weaker agentic-coding training compared to GPT-5 / Claude:
   //   - parallel_tool_calls: true        ← batch tool calls per turn
@@ -180,6 +201,94 @@ async function handleResponses(
   }
 }
 
+// Build a synthetic Responses object that satisfies probes (cc-switch test
+// connection, etc.) without forwarding to MiMo. Status 200 + minimally-shaped
+// response is enough for connection-test tools, which only check the status.
+function respondToResponsesProbe(
+  payload: ResponsesRequest,
+  res: ServerResponse,
+  stream: boolean
+): void {
+  const id = `resp_probe_${Date.now()}`;
+  const created_at = Math.floor(Date.now() / 1000);
+  const completed = {
+    id,
+    object: "response",
+    created_at,
+    status: "completed",
+    model: payload.model,
+    output: [],
+    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    parallel_tool_calls: true,
+    tool_choice: "auto",
+    text: { format: { type: "text" } },
+    reasoning: { effort: null, summary: null },
+    incomplete_details: null,
+    error: null,
+    metadata: null,
+  };
+  if (!stream) {
+    sendJson(res, 200, completed);
+    return;
+  }
+  res.statusCode = 200;
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  const inProgress = { ...completed, status: "in_progress" };
+  res.write(
+    `event: response.created\ndata: ${JSON.stringify({ type: "response.created", response: inProgress, sequence_number: 0 })}\n\n`
+  );
+  res.write(
+    `event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: completed, sequence_number: 1 })}\n\n`
+  );
+  res.end();
+}
+
+// Synthetic Chat Completion for probes hitting /v1/chat/completions with empty
+// messages. Mirror of respondToResponsesProbe but in OpenAI Chat shape.
+function respondToChatProbe(
+  payload: ChatRequest,
+  res: ServerResponse,
+  stream: boolean
+): void {
+  const id = `chatcmpl_probe_${Date.now()}`;
+  const created = Math.floor(Date.now() / 1000);
+  if (!stream) {
+    sendJson(res, 200, {
+      id,
+      object: "chat.completion",
+      created,
+      model: payload.model,
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "" },
+          finish_reason: "stop",
+        },
+      ],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    });
+    return;
+  }
+  res.statusCode = 200;
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  const chunk = (delta: object, finish: string | null): string =>
+    `data: ${JSON.stringify({
+      id,
+      object: "chat.completion.chunk",
+      created,
+      model: payload.model,
+      choices: [{ index: 0, delta, finish_reason: finish }],
+    })}\n\n`;
+  res.write(chunk({ role: "assistant", content: "" }, null));
+  res.write(chunk({}, "stop"));
+  res.write(`data: [DONE]\n\n`);
+  res.end();
+}
+
 // Passthrough for POST /v1/chat/completions. mimo2codex's primary surface is
 // the Responses API translation, but plenty of tools (cc-switch's "test
 // connection" probe, Cherry Studio, raw OpenAI SDKs) only speak Chat
@@ -207,6 +316,20 @@ async function handleChatPassthrough(
       400,
       errorEnvelope(400, "missing_model", "request body must include 'model'")
     );
+  }
+
+  log.debug("incoming POST /v1/chat/completions", {
+    model: payload.model,
+    stream: !!payload.stream,
+    messages: Array.isArray(payload.messages) ? payload.messages.length : "n/a",
+    keys: Object.keys(payload),
+  });
+  log.debug("incoming POST /v1/chat/completions raw body", payload);
+
+  // Probe short-circuit (mirrors handleResponses): empty messages → synthetic 200.
+  if (!Array.isArray(payload.messages) || payload.messages.length === 0) {
+    log.debug("matched probe shape — returning synthetic 200 without upstream call");
+    return respondToChatProbe(payload, res, !!payload.stream);
   }
 
   const ac = new AbortController();

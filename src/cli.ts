@@ -1,9 +1,10 @@
 #!/usr/bin/env node
+import { createRequire } from "node:module";
 import { buildConfig, parseArgv, type Config } from "./config.js";
 import { startServer } from "./server.js";
 import { setVerbose, log, redactKey } from "./util/log.js";
 
-const VERSION = "0.1.0";
+const VERSION = (createRequire(import.meta.url)("../package.json") as { version: string }).version;
 
 const HELP = `mimo2codex v${VERSION} — local proxy: Codex Responses API → Xiaomi MiMo Chat Completions
 
