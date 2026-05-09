@@ -3,10 +3,11 @@ import { createRequire } from "node:module";
 import { buildConfig, parseArgv, type Config } from "./config.js";
 import { startServer } from "./server.js";
 import { setVerbose, log, redactKey } from "./util/log.js";
+import { closeDb, openDb } from "./db/index.js";
 
 const VERSION = (createRequire(import.meta.url)("../package.json") as { version: string }).version;
 
-const HELP = `mimo2codex v${VERSION} — local proxy: Codex Responses API → Xiaomi MiMo Chat Completions
+const HELP = `mimo2codex v${VERSION} — local proxy: Codex Responses API → Chat Completions (MiMo / DeepSeek)
 
 USAGE
   mimo2codex [options]
@@ -16,13 +17,25 @@ USAGE
 OPTIONS
   -p, --port <n>          listen port (default: 8788, env: MIMO2CODEX_PORT)
       --host <h>          bind host (default: 127.0.0.1, env: MIMO2CODEX_HOST)
-      --base-url <url>    MiMo base url (default: https://api.xiaomimimo.com/v1, env: MIMO_BASE_URL)
-      --api-key <key>     MiMo api key (env: MIMO_API_KEY) — required
-      --no-reasoning      hide MiMo reasoning_content from Codex (still re-injected for multi-turn quality)
+      --model <shortcut>  default upstream provider: "mimo" (default) or "ds" (DeepSeek)
+      --base-url <url>    base url for the default provider (env: MIMO_BASE_URL / DEEPSEEK_BASE_URL)
+      --api-key <key>     api key for the default provider (env varies — see below) — required
+      --no-reasoning      hide reasoning_content from Codex (still re-injected for multi-turn quality)
       --reasoning         force reasoning passthrough (default)
+      --data-dir <path>   admin sqlite + UI data directory (default: ~/.mimo2codex,
+                          env: MIMO2CODEX_DATA_DIR)
+      --no-admin          disable the local admin UI + sqlite logging
+                          (env: MIMO2CODEX_NO_ADMIN=1)
   -v, --verbose           log every request (env: MIMO2CODEX_VERBOSE=1)
   -V, --version           print version
   -h, --help              show this help
+
+PROVIDER KEYS
+      MiMo:     MIMO_API_KEY                          (default base: https://api.xiaomimimo.com/v1)
+      DeepSeek: DS_API_KEY  or  DEEPSEEK_API_KEY      (default base: https://api.deepseek.com/v1)
+      Set the key for whichever provider --model selects. Other providers are
+      registered automatically when their key is present (per-request routing
+      lands in a follow-up release).
 
 DEFAULTS BAKED IN (no flag needed)
       ✓ MiMo thinking mode ON — model generates reasoning_content; use
@@ -141,19 +154,62 @@ ${configToml}
 `;
 }
 
+function checkMimoHostMismatch(cfg: Config): string | null {
+  // Catch the most common foot-gun: tp-* key sent at the pay-as-you-go host
+  // (or sk-* key sent at the token-plan host) — usually because MIMO_BASE_URL
+  // is left over in the shell from a previous session. Yields 401 or
+  // confusing 400s upstream; cheaper to warn at startup.
+  if (cfg.defaultProviderId !== "mimo") return null;
+  const isTpKey = cfg.apiKey.startsWith("tp-");
+  const isSkKey = cfg.apiKey.startsWith("sk-");
+  const hostIsTokenPlan = /token-plan/i.test(cfg.baseUrl);
+  if (isTpKey && !hostIsTokenPlan) {
+    return `tp-* key 通常需要 token-plan 主机，但当前 baseUrl 是 ${cfg.baseUrl}。检查 MIMO_BASE_URL / --base-url 是否覆盖了自动推断。`;
+  }
+  if (isSkKey && hostIsTokenPlan) {
+    return `sk-* key 通常需要 pay-as-you-go 主机，但当前 baseUrl 是 ${cfg.baseUrl}。检查 MIMO_BASE_URL / --base-url 是否泄漏（PowerShell: Remove-Item Env:MIMO_BASE_URL）。`;
+  }
+  return null;
+}
+
 function printStartupBanner(cfg: Config): void {
   // eslint-disable-next-line no-console
   console.log(`mimo2codex v${VERSION} listening on http://${cfg.host}:${cfg.port}`);
   // eslint-disable-next-line no-console
+  console.log(`provider:    ${cfg.defaultProviderId}`);
+  // eslint-disable-next-line no-console
   console.log(`upstream:    ${cfg.baseUrl}`);
   // eslint-disable-next-line no-console
   console.log(`api key:     ${redactKey(cfg.apiKey)}`);
-  // eslint-disable-next-line no-console
-  console.log(
-    `plan:        ${cfg.isTokenPlan ? "token-plan (web_search auto-disabled — plugin not available)" : "pay-as-you-go"}`
-  );
+  const mismatch = checkMimoHostMismatch(cfg);
+  if (mismatch) {
+    // eslint-disable-next-line no-console
+    console.log(`⚠ 警告:      ${mismatch}`);
+  }
+  if (cfg.defaultProviderId === "mimo") {
+    // eslint-disable-next-line no-console
+    console.log(
+      `plan:        ${cfg.isTokenPlan ? "token-plan (web_search auto-disabled — plugin not available)" : "pay-as-you-go"}`
+    );
+  }
   // eslint-disable-next-line no-console
   console.log(`reasoning:   ${cfg.exposeReasoning ? "passthrough" : "hidden"}`);
+  const others = (Object.keys(cfg.providers) as Array<keyof typeof cfg.providers>)
+    .filter((id) => id !== cfg.defaultProviderId && cfg.providers[id])
+    .join(", ");
+  if (others) {
+    // eslint-disable-next-line no-console
+    console.log(`registered:  ${others} (model-routed when client picks one of those ids)`);
+  }
+  if (cfg.adminEnabled) {
+    // eslint-disable-next-line no-console
+    console.log(`admin UI:    http://${cfg.host}:${cfg.port}/admin/`);
+    // eslint-disable-next-line no-console
+    console.log(`data dir:    ${cfg.dataDir}`);
+  } else {
+    // eslint-disable-next-line no-console
+    console.log(`admin UI:    disabled (--no-admin)`);
+  }
   // eslint-disable-next-line no-console
   console.log("");
   // eslint-disable-next-line no-console
@@ -208,6 +264,20 @@ function main(): void {
   }
 
   setVerbose(cfg.verbose);
+
+  if (cfg.adminEnabled) {
+    try {
+      openDb(cfg.dataDir);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `error: failed to open admin database at ${cfg.dataDir}: ${(err as Error).message}\n` +
+          `Pass --no-admin to disable persistence, or --data-dir <path> to choose a writable location.`
+      );
+      process.exit(2);
+    }
+  }
+
   printStartupBanner(cfg);
 
   const server = startServer(cfg);
@@ -221,7 +291,14 @@ function main(): void {
 
   const shutdown = (sig: string) => {
     log.info(`received ${sig}, shutting down`);
-    server.close(() => process.exit(0));
+    server.close(() => {
+      try {
+        closeDb();
+      } catch {
+        // ignore
+      }
+      process.exit(0);
+    });
     setTimeout(() => process.exit(1), 5000).unref();
   };
   process.on("SIGINT", () => shutdown("SIGINT"));

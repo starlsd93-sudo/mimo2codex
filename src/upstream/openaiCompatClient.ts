@@ -1,24 +1,15 @@
 import type { ChatRequest } from "../translate/types.js";
 import { log, redactKey } from "../util/log.js";
+import type { ProviderEnhancedError } from "../providers/types.js";
 
 export interface UpstreamConfig {
   baseUrl: string;
   apiKey: string;
   userAgent: string;
+  enhanceError?: (ctx: { status: number; snippet?: string }) => ProviderEnhancedError | null;
   connectTimeoutMs?: number;
   idleTimeoutMs?: number;
 }
-
-// Marker that MiMo emits in 400 responses when web_search is forwarded but
-// the user's account doesn't have the Web Search Plugin activated.
-// Full param string: "web search tool found in the request body, but webSearchEnabled is false"
-const WEB_SEARCH_DISABLED_MARKER = "webSearchEnabled is false";
-
-const WEB_SEARCH_HINT =
-  "MiMo Web Search Plugin is not activated for this account. " +
-  "Activate it at https://platform.xiaomimimo.com/#/console/plugin (separately billed) " +
-  "and restart mimo2codex. The model has decided to call web_search; if your account " +
-  "doesn't include the plugin, this request will keep failing until activated.";
 
 export class UpstreamError extends Error {
   status: number;
@@ -40,8 +31,8 @@ function buildUrl(baseUrl: string): string {
 }
 
 function authHeader(apiKey: string): Record<string, string> {
-  // MiMo accepts both "Authorization: Bearer" and "api-key". Bearer is more
-  // universally supported by intermediaries, so we use it.
+  // Both MiMo and DeepSeek accept the OpenAI-style Bearer scheme, which is
+  // also more universally supported by intermediaries than the api-key header.
   return { Authorization: `Bearer ${apiKey}` };
 }
 
@@ -54,7 +45,15 @@ async function readSnippet(res: Response): Promise<string | undefined> {
   }
 }
 
-export async function callMimo(
+function defaultErrorCode(status: number): string {
+  if (status === 401) return "authentication_error";
+  if (status === 403) return "permission_denied";
+  if (status === 429) return "rate_limit_exceeded";
+  if (status >= 500) return "server_error";
+  return "bad_request";
+}
+
+export async function callOpenAICompat(
   cfg: UpstreamConfig,
   body: ChatRequest,
   signal: AbortSignal
@@ -74,8 +73,6 @@ export async function callMimo(
     tools: body.tools?.length ?? 0,
     apiKey: redactKey(cfg.apiKey),
   });
-  // Full body in --verbose. Useful when MiMo returns an opaque 400 — you can
-  // see exactly what the proxy sent. No api key leaks; that's only in headers.
   log.debug("upstream POST body", body);
 
   const attempt = async (): Promise<Response> => {
@@ -93,7 +90,6 @@ export async function callMimo(
     res = await attempt();
   } catch (err) {
     if ((err as Error).name === "AbortError") throw err;
-    // Retry once on transient network errors.
     log.warn("upstream connect failed, retrying once", { error: (err as Error).message });
     try {
       res = await attempt();
@@ -101,31 +97,18 @@ export async function callMimo(
       throw new UpstreamError({
         status: 502,
         code: "upstream_unreachable",
-        message: `failed to reach MiMo: ${(err2 as Error).message}`,
+        message: `failed to reach upstream: ${(err2 as Error).message}`,
       });
     }
   }
 
   if (!res.ok) {
     const snippet = await readSnippet(res);
-    const code =
-      res.status === 401
-        ? "authentication_error"
-        : res.status === 403
-          ? "permission_denied"
-          : res.status === 429
-            ? "rate_limit_exceeded"
-            : res.status >= 500
-              ? "server_error"
-              : res.status === 400 && snippet?.includes(WEB_SEARCH_DISABLED_MARKER)
-                ? "web_search_plugin_not_activated"
-                : "bad_request";
-    const message =
-      res.status === 400 && snippet?.includes(WEB_SEARCH_DISABLED_MARKER)
-        ? `${WEB_SEARCH_HINT} (raw: ${snippet})`
-        : `MiMo returned ${res.status}: ${snippet ?? "(no body)"}`;
-    if (res.status === 400 && snippet?.includes(WEB_SEARCH_DISABLED_MARKER)) {
-      log.warn(WEB_SEARCH_HINT);
+    const enhanced = cfg.enhanceError?.({ status: res.status, snippet });
+    const code = enhanced?.code ?? defaultErrorCode(res.status);
+    const message = enhanced?.message ?? `upstream returned ${res.status}: ${snippet ?? "(no body)"}`;
+    if (enhanced) {
+      log.warn(enhanced.message);
     }
     throw new UpstreamError({
       status: res.status,

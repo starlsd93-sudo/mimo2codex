@@ -3,7 +3,8 @@
     "allow": [
       "Bash(pkill -f \"dist/cli.js\")",
       "Bash(pkill -f \"18800\")",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(npm run *)"
     ]
   }
 }

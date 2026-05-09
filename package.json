@@ -36,21 +36,27 @@
   },
   "scripts": {
     "build": "tsc -p .",
+    "build:all": "npm run build && npm run web:build",
+    "web:install": "npm --prefix web install",
+    "web:dev": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build",
     "start": "node dist/cli.js",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepack": "npm run build",
-    "prepublishOnly": "npm run build && npm test",
+    "prepack": "npm run build:all",
+    "prepublishOnly": "npm run build:all && npm test",
     "release:patch": "npm version patch && git push --follow-tags",
     "release:minor": "npm version minor && git push --follow-tags",
     "release:major": "npm version major && git push --follow-tags"
   },
   "dependencies": {
+    "better-sqlite3": "^12.9.0",
     "eventsource-parser": "^3.0.0",
     "nanoid": "^5.0.7"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.11.0",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0",

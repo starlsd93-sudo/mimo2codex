@@ -1,13 +1,16 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Config } from "./config.js";
-import { reqToChat } from "./translate/reqToChat.js";
 import { respToResponses } from "./translate/respToResponses.js";
 import { pipeChatStreamToResponses } from "./translate/streamToSse.js";
 import { iterChatStreamChunks } from "./upstream/chatStream.js";
-import { callMimo, UpstreamError } from "./upstream/mimoClient.js";
+import { callOpenAICompat, UpstreamError } from "./upstream/openaiCompatClient.js";
+import { byClientModel, PROVIDER_LIST, PROVIDERS } from "./providers/registry.js";
+import type { Provider, ProviderRuntime } from "./providers/types.js";
 import { makeServerResponseSink } from "./util/sse.js";
 import { log } from "./util/log.js";
-import type { ChatRequest, ChatResponse, ResponsesRequest } from "./translate/types.js";
+import type { ChatRequest, ChatResponse, ChatUsage, ResponsesRequest } from "./translate/types.js";
+import { handleAdmin } from "./admin/router.js";
+import { insertLog, type ChatLogEntry } from "./db/logs.js";
 
 const KEEPALIVE_INTERVAL_MS = 15_000;
 
@@ -63,6 +66,67 @@ function errorEnvelope(status: number, code: string, message: string): {
   };
 }
 
+interface SelectedProvider {
+  provider: Provider;
+  runtime: ProviderRuntime;
+  upstreamModel: string;
+}
+
+function recordLog(cfg: Config, entry: Omit<ChatLogEntry, "ts">): void {
+  if (!cfg.adminEnabled) return;
+  const ts = Date.now();
+  setImmediate(() => {
+    try {
+      insertLog({ ...entry, ts });
+    } catch (err) {
+      log.warn("chat_logs insert failed", { error: (err as Error).message });
+    }
+  });
+}
+
+function usageFromChatResponse(u: ChatUsage | undefined): {
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  total_tokens: number | null;
+} {
+  if (!u) return { prompt_tokens: null, completion_tokens: null, total_tokens: null };
+  return {
+    prompt_tokens: u.prompt_tokens ?? null,
+    completion_tokens: u.completion_tokens ?? null,
+    total_tokens: u.total_tokens ?? null,
+  };
+}
+
+// Route a request to a provider based on the client-supplied model field:
+//   1. If the model matches an enabled non-default provider's catalog → switch.
+//   2. Otherwise use the configured default provider; the body.model is
+//      rewritten to the default provider's defaultModel so we never forward
+//      an unknown id (which would 400 at the upstream).
+function selectProvider(clientModel: string, cfg: Config): SelectedProvider {
+  const matched = byClientModel(clientModel);
+  if (matched && cfg.providers[matched.id]) {
+    const resolved = matched.resolveModel(clientModel);
+    return {
+      provider: matched,
+      runtime: cfg.providers[matched.id]!,
+      upstreamModel: resolved?.id ?? matched.defaultModel,
+    };
+  }
+  const provider = PROVIDERS[cfg.defaultProviderId];
+  const runtime = cfg.providers[cfg.defaultProviderId];
+  if (!runtime) {
+    throw new Error(`provider ${cfg.defaultProviderId} has no runtime (missing api key)`);
+  }
+  // Unknown model → use the default provider's defaultModel so we don't pass
+  // a foreign id to the upstream.
+  const resolved = provider.resolveModel(clientModel);
+  return {
+    provider,
+    runtime,
+    upstreamModel: resolved?.id ?? provider.defaultModel,
+  };
+}
+
 async function handleResponses(
   cfg: Config,
   req: IncomingMessage,
@@ -97,9 +161,9 @@ async function handleResponses(
 
   // Health-check probe short-circuit. Tools like cc-switch's "test connection"
   // send POST /v1/responses with just `{model, stream}` and no input — our
-  // translation would forward `messages: []` to MiMo, which 400s. Detect the
-  // probe shape (no input, no instructions) and answer with a synthetic 200
-  // without burning an upstream call.
+  // translation would forward `messages: []` to the upstream, which 400s.
+  // Detect the probe shape (no input, no instructions) and answer with a
+  // synthetic 200 without burning an upstream call.
   const hasInput = Array.isArray(payload.input) && payload.input.length > 0;
   const hasInstructions = typeof payload.instructions === "string" && payload.instructions.length > 0;
   if (!hasInput && !hasInstructions) {
@@ -107,37 +171,43 @@ async function handleResponses(
     return respondToResponsesProbe(payload, res, !!payload.stream);
   }
 
-  // mimo2codex applies two default-on behaviors that compensate for MiMo's
-  // weaker agentic-coding training compared to GPT-5 / Claude:
-  //   - parallel_tool_calls: true        ← batch tool calls per turn
-  //   - web_search forwarded to MiMo     ← model decides when to search
-  //
-  // Note on web_search:
-  //   - On token-plan accounts (`tp-*` keys / token-plan-cn host), the Web
-  //     Search Plugin isn't available, so we proactively strip web_search
-  //     before forwarding (cfg.isTokenPlan).
-  //   - On pay-as-you-go accounts (`sk-*`), we keep forwarding. If the user
-  //     hasn't activated the plugin, MiMo returns 400 "webSearchEnabled is
-  //     false" — we surface that with a friendlier hint (see mimoClient.ts)
-  //     so the user activates the plugin and restarts.
-  //
-  // Note: we deliberately do NOT set `thinking: {type: "disabled"}` so that
-  // MiMo keeps generating `reasoning_content`. The user typically wants to
-  // see the thinking in the Codex terminal (use `--no-reasoning` to hide it).
-  const chat = reqToChat(payload, {
-    forceParallelToolCalls: true,
-    enableWebSearch: !cfg.isTokenPlan,
+  const { provider, runtime, upstreamModel } = selectProvider(payload.model, cfg);
+  log.debug(`routing to provider=${provider.id}`, {
+    baseUrl: runtime.baseUrl,
+    clientModel: payload.model,
+    upstreamModel,
   });
+
+  const chat = provider.preprocessResponses(payload, {
+    runtime,
+    exposeReasoning: cfg.exposeReasoning,
+  });
+  chat.model = upstreamModel;
   chat.stream = !!payload.stream;
   const stream = !!payload.stream;
 
   const ac = new AbortController();
   req.on("close", () => ac.abort());
 
+  const startedAt = Date.now();
+  const baseEntry = {
+    request_id: null as string | null,
+    provider_id: provider.id,
+    client_model: payload.model,
+    upstream_model: upstreamModel,
+    endpoint: "/v1/responses",
+    stream,
+  };
+
   if (!stream) {
     try {
-      const upstreamRes = await callMimo(
-        { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, userAgent: cfg.userAgent },
+      const upstreamRes = await callOpenAICompat(
+        {
+          baseUrl: runtime.baseUrl,
+          apiKey: runtime.apiKey,
+          userAgent: cfg.userAgent,
+          enhanceError: provider.enhanceError.bind(provider),
+        },
         chat,
         ac.signal
       );
@@ -145,39 +215,96 @@ async function handleResponses(
       const responses = respToResponses(chatJson, payload, {
         exposeReasoning: cfg.exposeReasoning,
       });
-      return sendJson(res, 200, responses);
+      sendJson(res, 200, responses);
+      recordLog(cfg, {
+        ...baseEntry,
+        request_id: chatJson.id ?? null,
+        status_code: 200,
+        duration_ms: Date.now() - startedAt,
+        ...usageFromChatResponse(chatJson.usage),
+        error_code: null,
+        error_snippet: null,
+      });
+      return;
     } catch (err) {
       if (err instanceof UpstreamError) {
-        return sendJson(res, err.status, errorEnvelope(err.status, err.code, err.message));
+        sendJson(res, err.status, errorEnvelope(err.status, err.code, err.message));
+        recordLog(cfg, {
+          ...baseEntry,
+          status_code: err.status,
+          duration_ms: Date.now() - startedAt,
+          prompt_tokens: null,
+          completion_tokens: null,
+          total_tokens: null,
+          error_code: err.code,
+          error_snippet: err.bodySnippet ?? err.message,
+        });
+        return;
       }
       log.error("non-stream request failed", { error: (err as Error).message });
-      return sendJson(res, 500, errorEnvelope(500, "internal_error", (err as Error).message));
+      sendJson(res, 500, errorEnvelope(500, "internal_error", (err as Error).message));
+      recordLog(cfg, {
+        ...baseEntry,
+        status_code: 500,
+        duration_ms: Date.now() - startedAt,
+        prompt_tokens: null,
+        completion_tokens: null,
+        total_tokens: null,
+        error_code: "internal_error",
+        error_snippet: (err as Error).message,
+      });
+      return;
     }
   }
 
-  // Streaming path. Strategy: don't open the SSE stream to the client until we
-  // know the upstream is OK. This way upstream errors map to clean HTTP errors
-  // instead of half-opened SSE streams that confuse the Codex client.
+  // Streaming path.
   let upstreamRes: Response;
   try {
-    upstreamRes = await callMimo(
-      { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, userAgent: cfg.userAgent },
+    upstreamRes = await callOpenAICompat(
+      {
+        baseUrl: runtime.baseUrl,
+        apiKey: runtime.apiKey,
+        userAgent: cfg.userAgent,
+        enhanceError: provider.enhanceError.bind(provider),
+      },
       chat,
       ac.signal
     );
   } catch (err) {
     if (err instanceof UpstreamError) {
-      return sendJson(res, err.status, errorEnvelope(err.status, err.code, err.message));
+      sendJson(res, err.status, errorEnvelope(err.status, err.code, err.message));
+      recordLog(cfg, {
+        ...baseEntry,
+        status_code: err.status,
+        duration_ms: Date.now() - startedAt,
+        prompt_tokens: null,
+        completion_tokens: null,
+        total_tokens: null,
+        error_code: err.code,
+        error_snippet: err.bodySnippet ?? err.message,
+      });
+      return;
     }
     log.error("stream request failed (pre-stream)", { error: (err as Error).message });
-    return sendJson(res, 500, errorEnvelope(500, "internal_error", (err as Error).message));
+    sendJson(res, 500, errorEnvelope(500, "internal_error", (err as Error).message));
+    recordLog(cfg, {
+      ...baseEntry,
+      status_code: 500,
+      duration_ms: Date.now() - startedAt,
+      prompt_tokens: null,
+      completion_tokens: null,
+      total_tokens: null,
+      error_code: "internal_error",
+      error_snippet: (err as Error).message,
+    });
+    return;
   }
 
-  // Upstream returned 200 — now we can safely open the SSE stream.
   const sink = makeServerResponseSink(res);
   const keepalive = setInterval(() => sink.comment("keepalive"), KEEPALIVE_INTERVAL_MS);
   res.on("close", () => clearInterval(keepalive));
 
+  let streamError: Error | null = null;
   try {
     const chunks = iterChatStreamChunks(upstreamRes);
     await pipeChatStreamToResponses(
@@ -187,26 +314,32 @@ async function handleResponses(
       { exposeReasoning: cfg.exposeReasoning }
     );
   } catch (err) {
-    log.error("stream request failed (mid-stream)", { error: (err as Error).message });
-    // pipeChatStreamToResponses handles its own errors with response.failed,
-    // so reaching here means something unexpected in our own code.
+    streamError = err as Error;
+    log.error("stream request failed (mid-stream)", { error: streamError.message });
     if (!sink.closed()) {
       sink.write("error", {
         type: "error",
         code: "server_error",
-        message: (err as Error).message,
+        message: streamError.message,
         sequence_number: 9999,
       });
       sink.end();
     }
   } finally {
     clearInterval(keepalive);
+    recordLog(cfg, {
+      ...baseEntry,
+      status_code: streamError ? 500 : 200,
+      duration_ms: Date.now() - startedAt,
+      prompt_tokens: null,
+      completion_tokens: null,
+      total_tokens: null,
+      error_code: streamError ? "stream_error" : null,
+      error_snippet: streamError ? streamError.message : null,
+    });
   }
 }
 
-// Build a synthetic Responses object that satisfies probes (cc-switch test
-// connection, etc.) without forwarding to MiMo. Status 200 + minimally-shaped
-// response is enough for connection-test tools, which only check the status.
 function respondToResponsesProbe(
   payload: ResponsesRequest,
   res: ServerResponse,
@@ -248,8 +381,6 @@ function respondToResponsesProbe(
   res.end();
 }
 
-// Synthetic Chat Completion for probes hitting /v1/chat/completions with empty
-// messages. Mirror of respondToResponsesProbe but in OpenAI Chat shape.
 function respondToChatProbe(
   payload: ChatRequest,
   res: ServerResponse,
@@ -292,12 +423,6 @@ function respondToChatProbe(
   res.end();
 }
 
-// Passthrough for POST /v1/chat/completions. mimo2codex's primary surface is
-// the Responses API translation, but plenty of tools (cc-switch's "test
-// connection" probe, Cherry Studio, raw OpenAI SDKs) only speak Chat
-// Completions. Since MiMo is itself Chat Completions–native, the cleanest
-// answer is to forward the body verbatim and stream/return whatever upstream
-// gives back. No translation, no state.
 async function handleChatPassthrough(
   cfg: Config,
   req: IncomingMessage,
@@ -329,28 +454,76 @@ async function handleChatPassthrough(
   });
   log.debug("incoming POST /v1/chat/completions raw body", payload);
 
-  // Probe short-circuit (mirrors handleResponses): empty messages → synthetic 200.
   if (!Array.isArray(payload.messages) || payload.messages.length === 0) {
     log.debug("matched probe shape — returning synthetic 200 without upstream call");
     return respondToChatProbe(payload, res, !!payload.stream);
   }
 
+  const { provider, runtime, upstreamModel } = selectProvider(payload.model, cfg);
+  log.debug(`routing chat passthrough to provider=${provider.id}`, {
+    clientModel: payload.model,
+    upstreamModel,
+  });
+
+  const body = provider.preprocessChat(payload, {
+    runtime,
+    exposeReasoning: cfg.exposeReasoning,
+  });
+  body.model = upstreamModel;
+
   const ac = new AbortController();
   req.on("close", () => ac.abort());
 
+  const startedAt = Date.now();
+  const baseEntry = {
+    request_id: null as string | null,
+    provider_id: provider.id,
+    client_model: payload.model,
+    upstream_model: upstreamModel,
+    endpoint: "/v1/chat/completions",
+    stream: !!payload.stream,
+  };
+
   let upstreamRes: Response;
   try {
-    upstreamRes = await callMimo(
-      { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, userAgent: cfg.userAgent },
-      payload,
+    upstreamRes = await callOpenAICompat(
+      {
+        baseUrl: runtime.baseUrl,
+        apiKey: runtime.apiKey,
+        userAgent: cfg.userAgent,
+        enhanceError: provider.enhanceError.bind(provider),
+      },
+      body,
       ac.signal
     );
   } catch (err) {
     if (err instanceof UpstreamError) {
-      return sendJson(res, err.status, errorEnvelope(err.status, err.code, err.message));
+      sendJson(res, err.status, errorEnvelope(err.status, err.code, err.message));
+      recordLog(cfg, {
+        ...baseEntry,
+        status_code: err.status,
+        duration_ms: Date.now() - startedAt,
+        prompt_tokens: null,
+        completion_tokens: null,
+        total_tokens: null,
+        error_code: err.code,
+        error_snippet: err.bodySnippet ?? err.message,
+      });
+      return;
     }
     log.error("chat passthrough failed", { error: (err as Error).message });
-    return sendJson(res, 500, errorEnvelope(500, "internal_error", (err as Error).message));
+    sendJson(res, 500, errorEnvelope(500, "internal_error", (err as Error).message));
+    recordLog(cfg, {
+      ...baseEntry,
+      status_code: 500,
+      duration_ms: Date.now() - startedAt,
+      prompt_tokens: null,
+      completion_tokens: null,
+      total_tokens: null,
+      error_code: "internal_error",
+      error_snippet: (err as Error).message,
+    });
+    return;
   }
 
   const contentType = upstreamRes.headers.get("content-type") ?? "application/json";
@@ -360,9 +533,20 @@ async function handleChatPassthrough(
   if (payload.stream) {
     if (!upstreamRes.body) {
       res.end();
+      recordLog(cfg, {
+        ...baseEntry,
+        status_code: 200,
+        duration_ms: Date.now() - startedAt,
+        prompt_tokens: null,
+        completion_tokens: null,
+        total_tokens: null,
+        error_code: null,
+        error_snippet: null,
+      });
       return;
     }
     const reader = upstreamRes.body.getReader();
+    let streamError: Error | null = null;
     try {
       // eslint-disable-next-line no-constant-condition
       while (true) {
@@ -371,26 +555,61 @@ async function handleChatPassthrough(
         if (value) res.write(Buffer.from(value));
       }
     } catch (err) {
-      log.error("chat passthrough stream error", { error: (err as Error).message });
+      streamError = err as Error;
+      log.error("chat passthrough stream error", { error: streamError.message });
     } finally {
       res.end();
+      recordLog(cfg, {
+        ...baseEntry,
+        status_code: streamError ? 500 : 200,
+        duration_ms: Date.now() - startedAt,
+        prompt_tokens: null,
+        completion_tokens: null,
+        total_tokens: null,
+        error_code: streamError ? "stream_error" : null,
+        error_snippet: streamError ? streamError.message : null,
+      });
     }
     return;
   }
 
   const text = await upstreamRes.text();
   res.end(text);
+  // Try to extract token usage from the JSON body so logs reflect cost.
+  let usage: ChatUsage | undefined;
+  try {
+    const parsed = JSON.parse(text) as { usage?: ChatUsage };
+    usage = parsed.usage;
+  } catch {
+    // ignore
+  }
+  recordLog(cfg, {
+    ...baseEntry,
+    status_code: 200,
+    duration_ms: Date.now() - startedAt,
+    ...usageFromChatResponse(usage),
+    error_code: null,
+    error_snippet: null,
+  });
 }
 
-function handleModels(res: ServerResponse): void {
-  sendJson(res, 200, {
-    object: "list",
-    data: [
-      { id: "mimo-v2.5-pro", object: "model", owned_by: "xiaomi" },
-      { id: "mimo-v2.5-pro[1m]", object: "model", owned_by: "xiaomi" },
-      { id: "mimo-v2-flash", object: "model", owned_by: "xiaomi" },
-    ],
-  });
+function handleModels(cfg: Config, res: ServerResponse): void {
+  // Aggregate the catalogs of every provider whose api key is configured. The
+  // default provider's catalog comes first so existing tools that pick the top
+  // entry keep their previous behavior.
+  const ordered: Provider[] = [
+    PROVIDERS[cfg.defaultProviderId],
+    ...PROVIDER_LIST.filter((p) => p.id !== cfg.defaultProviderId),
+  ];
+  const data: Array<{ id: string; object: "model"; owned_by: string }> = [];
+  for (const p of ordered) {
+    if (!cfg.providers[p.id]) continue;
+    const ownedBy = p.id === "mimo" ? "xiaomi" : "deepseek";
+    for (const m of p.builtinModels) {
+      data.push({ id: m.id, object: "model", owned_by: ownedBy });
+    }
+  }
+  sendJson(res, 200, { object: "list", data });
 }
 
 export function startServer(cfg: Config): Server {
@@ -398,11 +617,16 @@ export function startServer(cfg: Config): Server {
     const url = req.url ?? "/";
 
     if (req.method === "GET" && (url === "/healthz" || url === "/")) {
-      sendJson(res, 200, { ok: true, name: "mimo2codex", baseUrl: cfg.baseUrl });
+      sendJson(res, 200, {
+        ok: true,
+        name: "mimo2codex",
+        provider: cfg.defaultProviderId,
+        baseUrl: cfg.baseUrl,
+      });
       return;
     }
     if (req.method === "GET" && url.startsWith("/v1/models")) {
-      handleModels(res);
+      handleModels(cfg, res);
       return;
     }
     if (req.method === "POST" && url.startsWith("/v1/responses")) {
@@ -411,6 +635,10 @@ export function startServer(cfg: Config): Server {
     }
     if (req.method === "POST" && url.startsWith("/v1/chat/completions")) {
       void handleChatPassthrough(cfg, req, res);
+      return;
+    }
+    if (cfg.adminEnabled && (url === "/admin" || url.startsWith("/admin/"))) {
+      void handleAdmin(cfg, req, res);
       return;
     }
     sendJson(res, 404, errorEnvelope(404, "not_found", `no route for ${req.method} ${url}`));
