@@ -64,13 +64,20 @@ export const deepseek: Provider = {
     // Drop any MiMo-specific fields that may have leaked in.
     delete chat.thinking;
     delete chat.enable_thinking;
+    // DeepSeek's reasoning models (deepseek-v4-pro, -reasoner, -v4-flash in
+    // thinking mode) reject requests whose history contains assistant messages
+    // with `reasoning_content` — they 400 with "The `reasoning_content` in the
+    // thinking mode must be passed back to the API" (the wording is a CN→EN
+    // glitch; it actually means "must NOT be sent back as input"). reqToChat
+    // re-injects reasoning_content for MiMo's sake; we strip it here for DS.
+    stripReasoningContent(chat);
     return chat;
   },
 
   preprocessChat(req: ChatRequest, _ctx: PreprocessCtx): ChatRequest {
-    // Strip MiMo-specific fields from chat passthrough so a misrouted request
-    // doesn't 400 at DeepSeek.
-    const out = { ...req };
+    // Strip MiMo-specific fields + previous-turn reasoning_content from chat
+    // passthrough so a misrouted request doesn't 400 at DeepSeek.
+    const out = { ...req, messages: req.messages.map(cloneWithoutReasoning) };
     delete out.thinking;
     delete out.enable_thinking;
     return out;
@@ -80,3 +87,19 @@ export const deepseek: Provider = {
     return null;
   },
 };
+
+function cloneWithoutReasoning(m: ChatRequest["messages"][number]): ChatRequest["messages"][number] {
+  if (!("reasoning_content" in m) || m.reasoning_content == null) return m;
+  const { reasoning_content: _drop, ...rest } = m;
+  void _drop;
+  return rest;
+}
+
+function stripReasoningContent(chat: ChatRequest): void {
+  for (let i = 0; i < chat.messages.length; i++) {
+    const m = chat.messages[i];
+    if (m.reasoning_content !== undefined) {
+      chat.messages[i] = cloneWithoutReasoning(m);
+    }
+  }
+}

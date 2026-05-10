@@ -59,6 +59,62 @@ describe("deepseek provider", () => {
     expect(body.thinking).toEqual({ type: "enabled" });
   });
 
+  it("preprocessChat strips reasoning_content from assistant history (DS rejects it on input)", () => {
+    const body: ChatRequest = {
+      model: "deepseek-v4-pro",
+      messages: [
+        { role: "user", content: "first question" },
+        {
+          role: "assistant",
+          content: "first answer",
+          reasoning_content: "let me think...",
+        },
+        { role: "user", content: "follow-up" },
+      ],
+    };
+    const out = deepseek.preprocessChat(body, dsCtx);
+    expect(out.messages[1].reasoning_content).toBeUndefined();
+    expect(out.messages[1].content).toBe("first answer");
+    // Original input is not mutated.
+    expect(body.messages[1].reasoning_content).toBe("let me think...");
+  });
+
+  it("preprocessResponses strips reasoning_content re-injected by reqToChat", () => {
+    // Codex echoes prior reasoning items in the next request's input. reqToChat
+    // re-emits them as `reasoning_content` on the assistant message (for MiMo's
+    // sake). DeepSeek 400s on that — preprocessResponses must scrub it.
+    const req: ResponsesRequest = {
+      model: "deepseek-v4-pro",
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "search for cats" }],
+        },
+        {
+          type: "reasoning",
+          summary: [{ type: "summary_text", text: "I should call search" }],
+        },
+        {
+          type: "function_call",
+          call_id: "call_1",
+          name: "search",
+          arguments: '{"q":"cats"}',
+        },
+        { type: "function_call_output", call_id: "call_1", output: "5 results" },
+        { type: "message", role: "user", content: "thanks, more please" },
+      ],
+    };
+    const chat = deepseek.preprocessResponses(req, dsCtx);
+    for (const m of chat.messages) {
+      expect(m.reasoning_content).toBeUndefined();
+    }
+    // Tool calls and content should still be intact.
+    const assistantWithTool = chat.messages.find((m) => m.tool_calls?.length);
+    expect(assistantWithTool).toBeDefined();
+    expect(assistantWithTool!.tool_calls![0].function.name).toBe("search");
+  });
+
   it("enhanceError returns null (no DS-specific error mapping yet)", () => {
     expect(deepseek.enhanceError({ status: 400, snippet: "anything" })).toBeNull();
     expect(deepseek.enhanceError({ status: 401 })).toBeNull();
@@ -123,6 +179,32 @@ describe("mimo provider preprocessResponses retains MiMo specifics", () => {
   it("enhanceError returns null for unrelated 400 errors", () => {
     expect(mimo.enhanceError({ status: 400, snippet: "Param Incorrect" })).toBeNull();
     expect(mimo.enhanceError({ status: 401 })).toBeNull();
+  });
+
+  it("preprocessResponses preserves reasoning_content (MiMo needs it back in multi-turn)", () => {
+    // The opposite of the DS strip: MiMo's official guidance is to re-inject
+    // prior reasoning_content. Guard against accidental cross-contamination.
+    const req: ResponsesRequest = {
+      model: "mimo-v2.5-pro",
+      input: [
+        { type: "message", role: "user", content: "search for cats" },
+        {
+          type: "reasoning",
+          summary: [{ type: "summary_text", text: "I should call search" }],
+        },
+        {
+          type: "function_call",
+          call_id: "call_1",
+          name: "search",
+          arguments: '{"q":"cats"}',
+        },
+        { type: "function_call_output", call_id: "call_1", output: "5 results" },
+      ],
+    };
+    const chat = mimo.preprocessResponses(req, mimoCtx);
+    const assistantWithReasoning = chat.messages.find((m) => m.reasoning_content);
+    expect(assistantWithReasoning).toBeDefined();
+    expect(assistantWithReasoning!.reasoning_content).toBe("I should call search");
   });
 
   it("inferBaseUrlFromKey routes tp-* keys to the token-plan host", () => {
