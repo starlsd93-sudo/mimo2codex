@@ -126,6 +126,53 @@ describe("reqToChat", () => {
     ]);
   });
 
+  it("assistant text + reasoning + function_calls in same turn collapse into ONE assistant message", () => {
+    // Regression: previously the assistant message item triggered an immediate
+    // flush, leaving the subsequent function_call items in a second assistant
+    // message without reasoning_content. DeepSeek V4 thinking mode rejects
+    // assistant messages without reasoning_content with 400
+    // "The reasoning_content in the thinking mode must be passed back to the API".
+    const req: ResponsesRequest = {
+      model: "deepseek-v4-pro",
+      input: [
+        { type: "message", role: "user", content: "几点了，项目大不大" },
+        {
+          type: "reasoning",
+          summary: [{ type: "summary_text", text: "I'll check the time and list files." }],
+        },
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "先快速扫一眼项目结构" }],
+        },
+        {
+          type: "function_call",
+          call_id: "c1",
+          name: "shell",
+          arguments: '{"command":["date"]}',
+        },
+        { type: "function_call_output", call_id: "c1", output: "2026-05-10 14:17" },
+      ],
+    };
+    const chat = reqToChat(req);
+    expect(chat.messages).toEqual([
+      { role: "user", content: "几点了，项目大不大" },
+      {
+        role: "assistant",
+        content: "先快速扫一眼项目结构",
+        tool_calls: [
+          {
+            id: "c1",
+            type: "function",
+            function: { name: "shell", arguments: '{"command":["date"]}' },
+          },
+        ],
+        reasoning_content: "I'll check the time and list files.",
+      },
+      { role: "tool", tool_call_id: "c1", content: "2026-05-10 14:17" },
+    ]);
+  });
+
   it("reasoning + function_call collapse into single assistant turn with reasoning_content", () => {
     const req: ResponsesRequest = {
       model: "mimo-v2.5-pro",

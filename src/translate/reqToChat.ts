@@ -382,13 +382,21 @@ function inputItemsToMessages(
     switch (item.type) {
       case "message": {
         if (item.role === "assistant") {
-          // Assistant message — fold into pending so reasoning_content can join it.
+          // Buffer assistant text into pending, but DO NOT flush yet — any
+          // following function_call items (same agent turn) need to merge into
+          // ONE assistant message alongside the text and reasoning_content.
+          // Splitting them would leave the tool-call message without reasoning,
+          // which DeepSeek V4 thinking mode rejects with
+          // "The reasoning_content in the thinking mode must be passed back".
+          //
+          // Edge case: two assistant messages back-to-back (rare). Flush the
+          // previous one first so we don't drop its text.
+          if (state.pendingAssistantText !== null) {
+            flushAssistant(out, state);
+          }
           const content = partsToChatContent(item.content, ctx);
           state.pendingAssistantText =
             typeof content === "string" ? content : "";
-          // If assistant message comes alone (without preceding reasoning or
-          // following tool_calls), flush immediately so we keep ordering.
-          flushAssistant(out, state);
         } else {
           flushAssistant(out, state);
           out.push(messageItemToChat(item, ctx));
