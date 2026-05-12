@@ -12,10 +12,15 @@ const WEB_SEARCH_HINT =
   "and restart mimo2codex. The model has decided to call web_search; if your account " +
   "doesn't include the plugin, this request will keep failing until activated.";
 
+// Per https://platform.xiaomimimo.com/docs/zh-CN/usage-guide/multimodal-understanding/image-understanding,
+// only `mimo-v2.5`, `mimo-v2.5[1m]` and `mimo-v2-omni` accept image input.
+// The pro/flash variants do not — they return 404 "No endpoints found that
+// support image input" if sent images.
 const BUILTIN_MODELS: readonly ProviderModel[] = [
   {
     id: "mimo-v2.5-pro",
     displayName: "MiMo V2.5 Pro",
+    supportsImages: false,
     supportsReasoning: true,
     supportsWebSearch: true,
     contextWindow: 128_000,
@@ -23,13 +28,39 @@ const BUILTIN_MODELS: readonly ProviderModel[] = [
   {
     id: "mimo-v2.5-pro[1m]",
     displayName: "MiMo V2.5 Pro (1M)",
+    supportsImages: false,
     supportsReasoning: true,
     supportsWebSearch: true,
     contextWindow: 1_000_000,
   },
   {
+    id: "mimo-v2.5",
+    displayName: "MiMo V2.5 (Vision)",
+    supportsImages: true,
+    supportsReasoning: true,
+    supportsWebSearch: true,
+    contextWindow: 128_000,
+  },
+  {
+    id: "mimo-v2.5[1m]",
+    displayName: "MiMo V2.5 (Vision, 1M)",
+    supportsImages: true,
+    supportsReasoning: true,
+    supportsWebSearch: true,
+    contextWindow: 1_000_000,
+  },
+  {
+    id: "mimo-v2-omni",
+    displayName: "MiMo V2 Omni (Vision + Audio)",
+    supportsImages: true,
+    supportsReasoning: true,
+    supportsWebSearch: true,
+    contextWindow: 128_000,
+  },
+  {
     id: "mimo-v2-flash",
     displayName: "MiMo V2 Flash",
+    supportsImages: false,
     contextWindow: 128_000,
   },
 ];

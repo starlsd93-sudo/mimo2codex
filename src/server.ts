@@ -71,6 +71,11 @@ interface SelectedProvider {
   provider: Provider;
   runtime: ProviderRuntime;
   upstreamModel: string;
+  // Set when the client-supplied model id was NOT a known model for the
+  // routed provider and we fell back to a different upstream id. Surfaced
+  // in logs so the rewrite is visible (vs. silently changing the model id
+  // and confusing the user when capabilities like vision diverge).
+  rewriteNotice: { from: string; to: string; reason: string } | null;
 }
 
 function recordLog(cfg: Config, entry: Omit<ChatLogEntry, "ts">): void {
@@ -125,14 +130,29 @@ function countToolCallsInChatResponse(resp: ChatResponse | undefined): number | 
 //   2. Otherwise use the configured default provider; the body.model is
 //      rewritten to the default provider's defaultModel so we never forward
 //      an unknown id (which would 400 at the upstream).
+//
+// Whenever the model id is rewritten on the way out (e.g. an unknown
+// `mimo-v2.5-vision-preview` is fallen back to `mimo-v2.5-pro`), we attach a
+// `rewriteNotice` so callers can log/persist the mismatch. Silent rewrites
+// hide capability mismatches like vision support and are the root of bugs
+// where a client thinks it's calling `mimo-v2.5` but the proxy sent
+// `mimo-v2.5-pro` upstream.
 function selectProvider(clientModel: string, cfg: Config): SelectedProvider {
   const matched = byClientModel(clientModel);
   if (matched && cfg.providers[matched.id]) {
     const resolved = matched.resolveModel(clientModel);
+    const upstreamModel = resolved?.id ?? matched.defaultModel;
     return {
       provider: matched,
       runtime: cfg.providers[matched.id]!,
-      upstreamModel: resolved?.id ?? matched.defaultModel,
+      upstreamModel,
+      rewriteNotice: resolved
+        ? null
+        : {
+            from: clientModel,
+            to: upstreamModel,
+            reason: "matched provider catalog but unknown model id → using provider's defaultModel",
+          },
     };
   }
   const provider = PROVIDERS[cfg.defaultProviderId];
@@ -143,10 +163,28 @@ function selectProvider(clientModel: string, cfg: Config): SelectedProvider {
   // Unknown model → use the default provider's defaultModel so we don't pass
   // a foreign id to the upstream.
   const resolved = provider.resolveModel(clientModel);
+  const upstreamModel = resolved?.id ?? provider.defaultModel;
   return {
     provider,
     runtime,
-    upstreamModel: resolved?.id ?? provider.defaultModel,
+    upstreamModel,
+    rewriteNotice: resolved
+      ? null
+      : {
+          from: clientModel,
+          to: upstreamModel,
+          reason: `unknown client model — falling back to ${cfg.defaultProviderId} provider's defaultModel`,
+        },
+  };
+}
+
+function rewriteWarning(notice: { from: string; to: string; reason: string }): {
+  code: string;
+  message: string;
+} {
+  return {
+    code: "client_model_rewritten",
+    message: `client model "${notice.from}" was rewritten to upstream "${notice.to}" — ${notice.reason}. If you wanted the original id, add it to the provider's builtinModels or configure an alias.`,
   };
 }
 
@@ -194,12 +232,20 @@ async function handleResponses(
     return respondToResponsesProbe(payload, res, !!payload.stream);
   }
 
-  const { provider, runtime, upstreamModel } = selectProvider(payload.model, cfg);
+  const { provider, runtime, upstreamModel, rewriteNotice } = selectProvider(payload.model, cfg);
   log.debug(`routing to provider=${provider.id}`, {
     baseUrl: runtime.baseUrl,
     clientModel: payload.model,
     upstreamModel,
   });
+  if (rewriteNotice) {
+    log.warn("client model rewritten on the way upstream", {
+      provider: provider.id,
+      from: rewriteNotice.from,
+      to: rewriteNotice.to,
+      reason: rewriteNotice.reason,
+    });
+  }
 
   const chat = provider.preprocessResponses(payload, {
     runtime,
@@ -214,6 +260,12 @@ async function handleResponses(
 
   const startedAt = Date.now();
   const requestBodySnapshot = bodyForLog(payload);
+  const rewriteLogFields = rewriteNotice
+    ? (() => {
+        const w = rewriteWarning(rewriteNotice);
+        return { error_code: w.code, error_snippet: w.message };
+      })()
+    : { error_code: null, error_snippet: null };
   const baseEntry = {
     request_id: null as string | null,
     provider_id: provider.id,
@@ -247,8 +299,7 @@ async function handleResponses(
         status_code: 200,
         duration_ms: Date.now() - startedAt,
         ...usageFromChatResponse(chatJson.usage),
-        error_code: null,
-        error_snippet: null,
+        ...rewriteLogFields,
         response_body: bodyForLog(responses),
         tool_call_count: countToolCallsInChatResponse(chatJson),
       });
@@ -371,8 +422,8 @@ async function handleResponses(
       prompt_tokens: u?.input_tokens ?? null,
       completion_tokens: u?.output_tokens ?? null,
       total_tokens: u?.total_tokens ?? null,
-      error_code: streamError ? "stream_error" : null,
-      error_snippet: streamError ? streamError.message : null,
+      error_code: streamError ? "stream_error" : rewriteLogFields.error_code,
+      error_snippet: streamError ? streamError.message : rewriteLogFields.error_snippet,
       response_body: bodyForLog(pipeResult?.response),
       tool_call_count: pipeResult?.toolCallCount ?? null,
     });
@@ -498,11 +549,19 @@ async function handleChatPassthrough(
     return respondToChatProbe(payload, res, !!payload.stream);
   }
 
-  const { provider, runtime, upstreamModel } = selectProvider(payload.model, cfg);
+  const { provider, runtime, upstreamModel, rewriteNotice } = selectProvider(payload.model, cfg);
   log.debug(`routing chat passthrough to provider=${provider.id}`, {
     clientModel: payload.model,
     upstreamModel,
   });
+  if (rewriteNotice) {
+    log.warn("client model rewritten on the way upstream", {
+      provider: provider.id,
+      from: rewriteNotice.from,
+      to: rewriteNotice.to,
+      reason: rewriteNotice.reason,
+    });
+  }
 
   const body = provider.preprocessChat(payload, {
     runtime,
@@ -515,6 +574,12 @@ async function handleChatPassthrough(
 
   const startedAt = Date.now();
   const requestBodySnapshot = bodyForLog(payload);
+  const rewriteLogFields = rewriteNotice
+    ? (() => {
+        const w = rewriteWarning(rewriteNotice);
+        return { error_code: w.code, error_snippet: w.message };
+      })()
+    : { error_code: null, error_snippet: null };
   const baseEntry = {
     request_id: null as string | null,
     provider_id: provider.id,
@@ -585,8 +650,7 @@ async function handleChatPassthrough(
         prompt_tokens: null,
         completion_tokens: null,
         total_tokens: null,
-        error_code: null,
-        error_snippet: null,
+        ...rewriteLogFields,
         response_body: null,
         tool_call_count: null,
       });
@@ -623,8 +687,8 @@ async function handleChatPassthrough(
         status_code: streamError ? 500 : 200,
         duration_ms: Date.now() - startedAt,
         ...usageFromChatResponse(usage),
-        error_code: streamError ? "stream_error" : null,
-        error_snippet: streamError ? streamError.message : null,
+        error_code: streamError ? "stream_error" : rewriteLogFields.error_code,
+        error_snippet: streamError ? streamError.message : rewriteLogFields.error_snippet,
         response_body: collected ? redactSensitive(collected) : null,
         tool_call_count: toolCallCount,
       });
@@ -649,8 +713,7 @@ async function handleChatPassthrough(
     status_code: 200,
     duration_ms: Date.now() - startedAt,
     ...usageFromChatResponse(usage),
-    error_code: null,
-    error_snippet: null,
+    ...rewriteLogFields,
     response_body: text ? redactSensitive(text) : null,
     tool_call_count: toolCallCount,
   });

@@ -91,8 +91,22 @@ describe("admin REST", () => {
   it("GET /admin/api/providers/mimo/models lists builtins", async () => {
     const { status, json } = await call("GET", "/admin/api/providers/mimo/models");
     expect(status).toBe(200);
-    const models = (json as { models: Array<{ upstream_id: string; is_builtin: number }> }).models;
+    const models = (
+      json as {
+        models: Array<{ upstream_id: string; is_builtin: number; supports_images: number }>;
+      }
+    ).models;
     expect(models.find((m) => m.upstream_id === "mimo-v2.5-pro")).toBeDefined();
+    // Vision-capable models must be registered as identity-resolving builtins
+    // so client_model `mimo-v2.5` does not get silently rewritten to
+    // `mimo-v2.5-pro` (which would 404 on image input).
+    const v25 = models.find((m) => m.upstream_id === "mimo-v2.5");
+    expect(v25?.supports_images).toBe(1);
+    expect(models.find((m) => m.upstream_id === "mimo-v2.5[1m]")?.supports_images).toBe(1);
+    expect(models.find((m) => m.upstream_id === "mimo-v2-omni")?.supports_images).toBe(1);
+    // pro/flash must remain non-vision
+    expect(models.find((m) => m.upstream_id === "mimo-v2.5-pro")?.supports_images).toBe(0);
+    expect(models.find((m) => m.upstream_id === "mimo-v2-flash")?.supports_images).toBe(0);
     expect(models.every((m) => m.is_builtin === 1)).toBe(true);
   });
 

@@ -24,6 +24,29 @@ describe("provider registry", () => {
       expect(byClientModel("mimo-v2-flash")?.id).toBe("mimo");
     });
 
+    it("MiMo vision models route to mimo provider with identity resolution", () => {
+      // Regression: previously `mimo-v2.5` was missing from BUILTIN_MODELS,
+      // so requests fell back to `mimo-v2.5-pro` (no vision) — silently
+      // breaking image inputs with a 404.
+      expect(byClientModel("mimo-v2.5")?.id).toBe("mimo");
+      expect(mimo.resolveModel("mimo-v2.5")?.id).toBe("mimo-v2.5");
+      expect(mimo.resolveModel("mimo-v2.5")?.supportsImages).toBe(true);
+
+      expect(byClientModel("mimo-v2.5[1m]")?.id).toBe("mimo");
+      expect(mimo.resolveModel("mimo-v2.5[1m]")?.id).toBe("mimo-v2.5[1m]");
+      expect(mimo.resolveModel("mimo-v2.5[1m]")?.supportsImages).toBe(true);
+
+      expect(byClientModel("mimo-v2-omni")?.id).toBe("mimo");
+      expect(mimo.resolveModel("mimo-v2-omni")?.id).toBe("mimo-v2-omni");
+      expect(mimo.resolveModel("mimo-v2-omni")?.supportsImages).toBe(true);
+    });
+
+    it("pro/flash variants are explicitly non-vision", () => {
+      expect(mimo.resolveModel("mimo-v2.5-pro")?.supportsImages).toBe(false);
+      expect(mimo.resolveModel("mimo-v2.5-pro[1m]")?.supportsImages).toBe(false);
+      expect(mimo.resolveModel("mimo-v2-flash")?.supportsImages).toBe(false);
+    });
+
     it("DeepSeek models route to deepseek provider", () => {
       expect(byClientModel("deepseek-v4-pro")?.id).toBe("deepseek");
       expect(byClientModel("deepseek-v4-flash")?.id).toBe("deepseek");
