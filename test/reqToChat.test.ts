@@ -625,4 +625,63 @@ describe("reqToChat", () => {
     const chat = reqToChat(req);
     expect(chat.parallel_tool_calls).toBe(false);
   });
+
+  // Regression: when an image-gen tool returns its result as a structured
+  // array containing `input_image` parts, the proxy must NOT forward the
+  // array verbatim to upstream — Chat Completions tool messages only accept
+  // a string content, and DeepSeek explicitly 400s with
+  // "unknown variant `input_image`, expected `text`". The array must be
+  // flattened: text parts joined, image parts dropped with a placeholder.
+  it("function_call_output with array containing input_image is flattened to a string with placeholder", () => {
+    const req: ResponsesRequest = {
+      model: "deepseek-v4-pro",
+      input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "generate a pet" }] },
+        {
+          type: "function_call",
+          call_id: "call_img_1",
+          name: "generate_image",
+          arguments: '{"description":"chibi shiba"}',
+        },
+        {
+          type: "function_call_output",
+          call_id: "call_img_1",
+          output: [
+            { type: "output_text", text: "pet.png generated successfully." },
+            { type: "input_image", image_url: "data:image/png;base64,iVBORw0KGgo..." },
+          ] as any,
+        },
+      ],
+    };
+    const chat = reqToChat(req);
+    const tool = chat.messages.find((m) => m.role === "tool") as
+      | { role: "tool"; tool_call_id: string; content: string }
+      | undefined;
+    expect(tool).toBeDefined();
+    expect(typeof tool!.content).toBe("string");
+    expect(tool!.content).toContain("pet.png generated successfully.");
+    expect(tool!.content).toContain("[1 image attachment omitted from tool output");
+    expect(tool!.content).not.toContain("input_image");
+    expect(tool!.content).not.toContain("data:image");
+  });
+
+  it("function_call_output with plain string output is unchanged (regression guard)", () => {
+    const req: ResponsesRequest = {
+      model: "deepseek-v4-pro",
+      input: [
+        {
+          type: "function_call",
+          call_id: "c1",
+          name: "shell",
+          arguments: '{"cmd":"date"}',
+        },
+        { type: "function_call_output", call_id: "c1", output: "2026-05-12" },
+      ],
+    };
+    const chat = reqToChat(req);
+    const tool = chat.messages.find((m) => m.role === "tool") as
+      | { role: "tool"; tool_call_id: string; content: string }
+      | undefined;
+    expect(tool?.content).toBe("2026-05-12");
+  });
 });

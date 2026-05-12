@@ -7,6 +7,7 @@ import type {
   ChatToolChoice,
   ChatToolCall,
   ResponsesContentPart,
+  ResponsesFunctionCallOutputItem,
   ResponsesInputItem,
   ResponsesMessageItem,
   ResponsesRequest,
@@ -89,6 +90,46 @@ function partsToChatContent(
   }
   if (out.length === 0) return "";
   return out;
+}
+
+// Flatten a function_call_output.output into a plain string suitable for the
+// `tool` role's `content` field. Codex/Responses can send an array of content
+// parts here when a tool returned images (image_gen, mimoskill image gen,
+// etc.). Chat Completions tool messages only accept a string content across
+// all upstreams (OpenAI's array extension isn't supported by MiMo / DeepSeek /
+// most third-party providers, and DeepSeek explicitly 400s with
+// "unknown variant `input_image`, expected `text`"). So we always textify and
+// replace images with a one-line placeholder.
+function toolOutputToString(output: ResponsesFunctionCallOutputItem["output"]): string {
+  if (typeof output === "string") return output;
+  if (!Array.isArray(output)) {
+    try {
+      return JSON.stringify(output);
+    } catch {
+      return String(output);
+    }
+  }
+  const chunks: string[] = [];
+  let droppedImages = 0;
+  for (const p of output) {
+    if (!p || typeof p !== "object") continue;
+    if (p.type === "input_text" || p.type === "output_text") {
+      const text = typeof p.text === "string" ? p.text : "";
+      if (text.length > 0) chunks.push(text);
+    } else if (p.type === "input_image") {
+      droppedImages++;
+    }
+    // input_file and unknown parts are silently dropped.
+  }
+  if (droppedImages > 0) {
+    log.warn(
+      `dropped ${droppedImages} image part(s) from tool output — Chat Completions tool messages cannot carry images`
+    );
+    chunks.push(
+      `[${droppedImages} image attachment${droppedImages > 1 ? "s" : ""} omitted from tool output: this chat backend cannot ingest images in tool results.]`
+    );
+  }
+  return chunks.join("");
 }
 
 function messageItemToChat(
@@ -425,7 +466,7 @@ function inputItemsToMessages(
         out.push({
           role: "tool",
           tool_call_id: item.call_id,
-          content: item.output,
+          content: toolOutputToString(item.output),
         });
         break;
       }

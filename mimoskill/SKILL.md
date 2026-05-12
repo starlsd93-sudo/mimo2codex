@@ -18,7 +18,7 @@ Trigger this skill when:
 - User asks "how do I generate a Codex pet" / "/hatch isn't working" / "image_gen tool not available"
 - User wants image generation as part of a MiMo-backed workflow
 - User pastes the Codex error: `the image generation tool (image_gen) is not available in this environment` or `the CLI fallback requires the openai Python package`
-- User wants to **OCR / read text from / describe / 识别 / 提取文字 from an image** while the active chat model is non-vision (e.g. mimo-v2.5-pro, mimo-v2-flash, or any third-party model without vision) — use `scripts/ocr.py` to fall back through `mimo-v2.5` without changing the chat model
+- User wants to **OCR / read text from / describe / 识别 / 提取文字 from an image** while the active chat model is non-vision (e.g. mimo-v2.5-pro, mimo-v2-flash, deepseek-*, or any third-party text-only model) — use `scripts/ocr.py`. Works with or without a MiMo key (free pollinations fallback when `MIMO_API_KEY` is unset).
 - User sees the proxy's `[N image attachment(s) omitted: this model does not support image input …]` placeholder in their transcript
 - Anything in the `mimo2codex` repo that touches a feature MiMo doesn't support
 
@@ -38,7 +38,7 @@ Quick answer:
 | Audio chat | ✅ | `mimo-v2-omni` | input only |
 | Video understanding | ✅ | `mimo-v2-omni` | input only |
 | **Image generation** | ❌ | — | `scripts/generate_image.py` (general) or `scripts/generate_pet.py` (Codex pets) — see below |
-| OCR / 识图 (when chat model is non-vision) | ⚠️ via `mimo-v2.5` | `scripts/ocr.py` | always uses `mimo-v2.5` internally regardless of chat model |
+| OCR / 识图 (when chat model is non-vision) | ⚠️ via `mimo-v2.5` or free pollinations | `scripts/ocr.py` | `--engine auto`: mimo if `MIMO_API_KEY` set, else pollinations (no key) |
 | Code interpreter / sandbox | ❌ | — | not provided |
 
 For the full capability matrix and examples, read [references/models.md](references/models.md).
@@ -48,7 +48,7 @@ For the full capability matrix and examples, read [references/models.md](referen
 ```
 Is it OCR / read text from image / describe / 识别 an image
 when the active chat model is non-vision?
-├── Yes → use scripts/ocr.py (always routes through mimo-v2.5 internally)
+├── Yes → use scripts/ocr.py (mimo-v2.5 if MIMO_API_KEY set, else free pollinations)
 └── No
     │
     Is it chat / vision / search / TTS / ASR with a vision-capable model?
@@ -60,45 +60,51 @@ when the active chat model is non-vision?
         └── No  → see "General (non-pet) image generation" below (scripts/generate_image.py)
 ```
 
-## Calling MiMo directly
+## Calling chat directly (works without any key)
 
-Use `scripts/mimo_chat.py` to send a single chat completion (or stream):
+Use `scripts/mimo_chat.py` for one-shot or streaming chat. Two engines, `--engine auto` (default) picks `mimo` if `MIMO_API_KEY` is set, else `pollinations` (free, no key) — so **the script works without any key** for text and vision.
 
 ```bash
+# Zero-setup — uses pollinations fallback when MIMO_API_KEY is unset
+python3 mimoskill/scripts/mimo_chat.py "your prompt here"
+python3 mimoskill/scripts/mimo_chat.py --image https://example.com/x.png "describe this"
+
+# Best quality + MiMo-specific features (web search, TTS, ASR)
 export MIMO_API_KEY=sk-xxxxxxxxxxxxxxxx
 python3 mimoskill/scripts/mimo_chat.py "your prompt here"
-python3 mimoskill/scripts/mimo_chat.py --model mimo-v2.5 --image https://example.com/x.png "describe this"
-python3 mimoskill/scripts/mimo_chat.py --search "今天上海天气?"
+python3 mimoskill/scripts/mimo_chat.py "今天上海天气?"   # web search auto-enabled on sk-* keys
 python3 mimoskill/scripts/mimo_chat.py --stream "tell me a story"
 ```
 
-The script handles all the MiMo-specific quirks — `max_completion_tokens` instead of `max_tokens`, the required `text` part next to `image_url`, web_search plugin invocation, `reasoning_content` round-tripping, etc.
+When the mimo engine is active the script handles all MiMo-specific quirks — `max_completion_tokens` instead of `max_tokens`, the required `text` part next to `image_url`, `reasoning_content` round-tripping, etc. **Web search is auto-enabled on pay-as-you-go (`sk-*`) keys** — the `web_search` builtin is always included in the tools array and the model decides when to invoke it (`tool_choice: "auto"`). Token-plan (`tp-*`) keys skip web search (the endpoint doesn't support it). The pollinations engine doesn't support web search, TTS, or ASR (those are MiMo native features); it auto-switches to OpenAI-compat field names (`max_tokens`).
 
 For non-trivial integrations, [references/models.md](references/models.md) and [the official MiMo OpenAI-compat doc](https://platform.xiaomimimo.com/docs/api/chat/openai-api) are the authoritative references.
 
 ## OCR / image recognition (when the chat model can't see images)
 
-If the user wants to **read text from an image** or **describe / 识别 an image** but the current chat model is non-vision (`mimo-v2.5-pro`, `mimo-v2.5-pro[1m]`, `mimo-v2-flash`, or any third-party model without vision), invoke `scripts/ocr.py`. It always uses `mimo-v2.5` internally — the chat model stays untouched.
+If the user wants to **read text from an image** or **describe / 识别 an image** but the current chat model is non-vision (`mimo-v2.5-pro`, `mimo-v2.5-pro[1m]`, `mimo-v2-flash`, `deepseek-*`, or any third-party text-only model), invoke `scripts/ocr.py`. Two engines, `--engine auto` (default) picks the right one:
+
+- **`mimo`** — needs `MIMO_API_KEY`, uses `mimo-v2.5` regardless of the chat model. Best quality.
+- **`pollinations`** — free public vision endpoint at `text.pollinations.ai`, **no key required**. Mirrors the same no-key fallback `generate_pet.py` uses. Rate-limited but always available — covers users who only have a DeepSeek key (or no key at all).
 
 The proxy silently drops image attachments on non-vision models (`src/translate/reqToChat.ts:48-72`) and leaves a `[N image attachment(s) omitted: …]` placeholder. **When you see that placeholder in the transcript, the right move is to run ocr.py and feed the text back into the conversation.** Don't ask the user to switch models.
 
 ```bash
-export MIMO_API_KEY=sk-xxxxxxxxxxxxxxxx
+# Zero-setup — uses pollinations fallback when MIMO_API_KEY is unset
+python3 mimoskill/scripts/ocr.py path/to/image.png
+python3 mimoskill/scripts/ocr.py --mode describe https://example.com/x.png
+python3 mimoskill/scripts/ocr.py --mode structured a.png b.jpg
+cat scan.png | python3 mimoskill/scripts/ocr.py --mode markdown
 
-# verbatim OCR (default)
+# Best quality — set MiMo key, auto picks mimo
+export MIMO_API_KEY=sk-xxxxxxxxxxxxxxxx
 python3 mimoskill/scripts/ocr.py path/to/image.png
 
-# 2-4 sentence description
-python3 mimoskill/scripts/ocr.py --mode describe https://example.com/x.png
-
-# structured JSON (text + regions + language + summary)
-python3 mimoskill/scripts/ocr.py --mode structured a.png b.jpg
-
-# re-render as GitHub-flavored Markdown (good for forms / receipts)
-cat scan.png | python3 mimoskill/scripts/ocr.py --mode markdown
+# Force the free engine even when you have a MiMo key (e.g. to save quota)
+python3 mimoskill/scripts/ocr.py --engine pollinations form.png
 ```
 
-`ocr.py` accepts local paths, http(s) URLs, `data:` URLs, or stdin bytes. Magic-byte sniffs the MIME (PNG / JPEG / GIF / WebP / BMP). Multiple positional args are batched into one MiMo call. Non-vision `--model` values are auto-coerced to `mimo-v2.5` with one stderr note.
+`ocr.py` accepts local paths, http(s) URLs, `data:` URLs, or stdin bytes. Magic-byte sniffs the MIME (PNG / JPEG / GIF / WebP / BMP). Multiple positional args are batched into one upstream call. Non-vision `--model` values are auto-coerced to `mimo-v2.5` with one stderr note (mimo engine only; on pollinations use `--pollinations-model`).
 
 See [references/ocr_workflow.md](references/ocr_workflow.md) for full mode reference, exit codes, JSON shape for `--mode structured`, and the `--lang` / `--prompt` knobs.
 

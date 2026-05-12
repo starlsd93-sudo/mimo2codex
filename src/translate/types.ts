@@ -58,7 +58,12 @@ export interface ResponsesFunctionCallOutputItem {
   type: "function_call_output";
   id?: string;
   call_id: string;
-  output: string;
+  // Codex / OpenAI Responses send `output` as either a plain string OR an
+  // array of content parts (the latter when the tool returned images, e.g.
+  // image_gen / mimoskill image generation). Chat Completions tool messages
+  // only accept a string content, so the array form is flattened in
+  // reqToChat — see toolOutputToString.
+  output: string | ResponsesContentPart[];
 }
 
 export interface ResponsesReasoningSummaryPart {

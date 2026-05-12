@@ -1,21 +1,29 @@
 #!/usr/bin/env python3
 """
-mimo_chat.py — single-shot or streaming chat with Xiaomi MiMo V2.5.
+mimo_chat.py — single-shot or streaming chat. Works WITHOUT any API key.
 
-Hits MiMo's OpenAI-compatible /v1/chat/completions endpoint directly. Handles
-the MiMo-specific quirks:
+Engines (--engine):
+  auto          (default) — mimo if MIMO_API_KEY set, else pollinations
+  mimo          — Xiaomi MiMo V2.5 (best quality, needs MIMO_API_KEY)
+  pollinations  — pollinations.ai free public chat endpoint. NO KEY REQUIRED
 
+When the mimo engine is used, handles the MiMo-specific quirks:
   - max_completion_tokens (not max_tokens)
   - vision via mimo-v2.5 / mimo-v2-omni (and the required text part next to
     image_url, otherwise MiMo 400s with "text is not set")
-  - web_search builtin tool (requires Web Search Plugin activated in console)
+  - web_search builtin: auto-enabled on pay-as-you-go (sk-*) keys, skipped on
+    token-plan (tp-*) keys. Model decides when to invoke (tool_choice: auto).
+    Requires the Web Search Plugin to be activated in the MiMo console.
   - reasoning_content extraction
 
 Usage:
-    export MIMO_API_KEY=sk-xxxx
+    # Zero-setup
     python3 mimo_chat.py "your prompt"
-    python3 mimo_chat.py --model mimo-v2.5 --image https://x/y.png "describe"
-    python3 mimo_chat.py --search "今天上海天气?"
+    python3 mimo_chat.py --image https://x/y.png "describe"
+
+    # MiMo key — gets best quality + native web search (when sk-*)
+    export MIMO_API_KEY=sk-xxxx
+    python3 mimo_chat.py "今天上海天气?"
     python3 mimo_chat.py --stream "tell me a story"
 
 Only depends on the standard library — no `openai` SDK install needed.
@@ -48,51 +56,64 @@ def build_messages(prompt: str, image: str | None) -> list[dict[str, Any]]:
     ]
 
 
+POLLINATIONS_URL = "https://text.pollinations.ai/openai"
+POLLINATIONS_DEFAULT_MODEL = "openai"  # vision-capable, free, no key
+
+
 def build_body(
     *,
     prompt: str,
     image: str | None,
     model: str,
     stream: bool,
-    search: bool,
+    enable_web_search: bool,
     max_tokens: int,
     temperature: float,
+    engine: str,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": model,
         "messages": build_messages(prompt, image),
-        "max_completion_tokens": max_tokens,
         "temperature": temperature,
         "stream": stream,
     }
-    if search:
-        # MiMo native web_search builtin. Requires the Web Search Plugin to
-        # be activated at https://platform.xiaomimimo.com/#/console/plugin.
-        body["tools"] = [{"type": "web_search", "force_search": True}]
+    if engine == "mimo":
+        # MiMo's quirk: max_completion_tokens, not max_tokens.
+        body["max_completion_tokens"] = max_tokens
+    else:
+        body["max_tokens"] = max_tokens
+    if enable_web_search:
+        # MiMo native web_search builtin. The model decides whether to invoke
+        # it (tool_choice=auto). Requires the Web Search Plugin to be
+        # activated at https://platform.xiaomimimo.com/#/console/plugin —
+        # without that, MiMo returns 400 and the error body is printed.
+        body["tools"] = [{"type": "web_search"}]
         body["tool_choice"] = "auto"
     return body
 
 
-def post(url: str, body: dict[str, Any], api_key: str, stream: bool) -> Any:
+def post(url: str, body: dict[str, Any], api_key: str | None, stream: bool, *, engine: str) -> Any:
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream" if stream else "application/json",
+        "User-Agent": "mimoskill/0.1",
+    }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(
         url,
         method="POST",
         data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream" if stream else "application/json",
-            "Authorization": f"Bearer {api_key}",
-            "User-Agent": "mimoskill/0.1",
-        },
+        headers=headers,
     )
     try:
         return urllib.request.urlopen(req, timeout=300)
     except urllib.error.HTTPError as e:
         snippet = e.read().decode("utf-8", "replace")
-        sys.stderr.write(f"MiMo returned HTTP {e.code}: {snippet}\n")
+        sys.stderr.write(f"{engine} returned HTTP {e.code}: {snippet}\n")
         sys.exit(1)
     except urllib.error.URLError as e:
-        sys.stderr.write(f"connection failed: {e}\n")
+        sys.stderr.write(f"connection failed ({engine}): {e}\n")
         sys.exit(1)
 
 
@@ -144,51 +165,99 @@ def main() -> None:
     p.add_argument("prompt", nargs="?", default="", help="user message text")
     p.add_argument("--model", default=os.environ.get("MIMO_MODEL", "mimo-v2.5-pro"))
     p.add_argument("--image", help="image URL to attach (forces vision-capable model)")
-    p.add_argument("--search", action="store_true", help="enable MiMo web_search builtin")
     p.add_argument("--stream", action="store_true", help="stream the response")
     p.add_argument("--max-tokens", type=int, default=2048)
     p.add_argument("--temperature", type=float, default=0.7)
     p.add_argument(
+        "--engine",
+        choices=["auto", "mimo", "pollinations"],
+        default=os.environ.get("MIMO_CHAT_ENGINE", "auto"),
+        help="chat backend. auto = mimo if MIMO_API_KEY set, else pollinations "
+        "(free, no key required). default: %(default)s",
+    )
+    p.add_argument(
         "--base-url",
         default=os.environ.get("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1"),
-        help="set to https://token-plan-cn.xiaomimimo.com/v1 for tp-* keys",
+        help="MiMo endpoint, ignored when --engine=pollinations "
+        "(tp-* keys use https://token-plan-cn.xiaomimimo.com/v1)",
+    )
+    p.add_argument(
+        "--pollinations-model",
+        default=os.environ.get("POLLINATIONS_MODEL", POLLINATIONS_DEFAULT_MODEL),
+        help="model id when --engine=pollinations (default: %(default)s)",
     )
     args = p.parse_args()
 
     api_key = os.environ.get("MIMO_API_KEY")
-    if not api_key:
-        sys.stderr.write("error: MIMO_API_KEY not set in environment\n")
-        sys.stderr.write(
-            "  get one at https://platform.xiaomimimo.com/#/console/api-keys\n"
-        )
-        sys.exit(2)
+
+    # Resolve engine.
+    if args.engine == "mimo":
+        engine = "mimo"
+        if not api_key:
+            sys.stderr.write(
+                "error: --engine mimo requires MIMO_API_KEY.\n"
+                "  get one at https://platform.xiaomimimo.com/#/console/api-keys\n"
+                "  OR drop the flag to fall back to pollinations (free, no key required):\n"
+                "      python3 mimo_chat.py <prompt>\n"
+            )
+            sys.exit(3)
+    elif args.engine == "pollinations":
+        engine = "pollinations"
+    else:  # auto
+        engine = "mimo" if api_key else "pollinations"
+        if engine == "pollinations":
+            sys.stderr.write(
+                "[engine] auto -> pollinations (free, no key). "
+                "Set MIMO_API_KEY for higher quality (mimo-v2.5).\n"
+            )
 
     if not args.prompt and not args.image:
         sys.stderr.write("error: pass a prompt and/or --image\n")
         sys.exit(2)
 
-    # Auto-bump to a vision model if user passed --image with a non-vision model
-    model = args.model
-    if args.image and "omni" not in model.lower() and not model.startswith("mimo-v2.5["):
-        if model != "mimo-v2.5":
-            sys.stderr.write(
-                f"note: --image given but model is '{model}' which doesn't see images.\n"
-                f"      switching to mimo-v2.5 for this call.\n"
-            )
-            model = "mimo-v2.5"
+    enable_web_search = False
+    if engine == "mimo":
+        # Auto-bump to a vision model if user passed --image with a non-vision model.
+        model = args.model
+        if args.image and "omni" not in model.lower() and not model.startswith("mimo-v2.5["):
+            if model != "mimo-v2.5":
+                sys.stderr.write(
+                    f"note: --image given but model is '{model}' which doesn't see images.\n"
+                    f"      switching to mimo-v2.5 for this call.\n"
+                )
+                model = "mimo-v2.5"
+        url = args.base_url.rstrip("/") + "/chat/completions"
+        auth: str | None = api_key
+        # MiMo native web_search: pay-as-you-go (sk-*) supports it, token-plan
+        # (tp-*) does not. Always include the tool on sk-* and let the model
+        # decide via tool_choice=auto — no extra flag needed.
+        enable_web_search = bool(api_key and api_key.startswith("sk-"))
+    else:
+        # Pollinations: pick the configured vision-capable model. The user's
+        # --model (mimo-*) is mimo-specific so we don't honor it here unless
+        # they explicitly passed --pollinations-model.
+        model = args.pollinations_model
+        url = POLLINATIONS_URL
+        auth = None
+
+    sys.stderr.write(
+        f"[chat] engine={engine} model={model}"
+        + (" web_search=on" if enable_web_search else "")
+        + "\n"
+    )
 
     body = build_body(
         prompt=args.prompt,
         image=args.image,
         model=model,
         stream=args.stream,
-        search=args.search,
+        enable_web_search=enable_web_search,
         max_tokens=args.max_tokens,
         temperature=args.temperature,
+        engine=engine,
     )
 
-    url = args.base_url.rstrip("/") + "/chat/completions"
-    resp = post(url, body, api_key, args.stream)
+    resp = post(url, body, auth, args.stream, engine=engine)
     if args.stream:
         stream_chat(resp)
     else:

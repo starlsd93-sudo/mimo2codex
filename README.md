@@ -8,6 +8,27 @@ Local proxy that lets the **latest OpenAI Codex CLI / desktop** talk to virtuall
 
 ![Admin console · dashboard](https://raw.githubusercontent.com/7as0nch/mimo2codex/main/images/admin-dashboard.png)
 
+## Contents
+
+- [Why](#why) — what problem this solves
+- [What works](#what-works) — feature matrix
+- [Install — pick one](#install--pick-one) — npm / curl / clone
+- [Use](#use) — get a key, start the proxy, configure Codex
+- [Use with cc-switch](#use-with-cc-switch)
+- [Admin console](#admin-console) — dashboard, logs, models, settings
+  - [Enabling 1M long context](#enabling-1m-long-context)
+  - [Providers and model ids](#providers-and-model-ids)
+  - [Plugging in third-party OpenAI-compatible upstreams](#plugging-in-third-party-openai-compatible-upstreams) — Qwen / GLM / Kimi / Ollama / OpenAI
+- [CLI flags](#cli-flags)
+  - [Built-in defaults (no flag needed)](#built-in-defaults-no-flag-needed)
+- [Troubleshooting](#troubleshooting)
+- [mimoskill — fill MiMo's gaps](#mimoskill--fill-mimos-gaps) — image gen / OCR fallback / pet generation
+- [Project layout](#project-layout)
+- [Develop](#develop)
+- [License](#license)
+
+**Detailed guides:** [Generic providers](./doc/generic-providers.md) · [mimoskill](./doc/mimoskill.md)
+
 ## Why
 
 MiMo's [official Codex doc](https://platform.xiaomimimo.com/docs/zh-CN/integration/codex) only supports `wire_api = "chat"`, but newer Codex versions hard-error on it (the official workaround is to downgrade Codex, losing pets, the new desktop release and tool fixes). mimo2codex fixes this without touching either side: keep Codex on latest, run mimo2codex locally, Codex thinks it's talking to a native Responses backend.
@@ -370,7 +391,9 @@ This pattern (concrete instruction + explicit tool name + "don't explain") is mu
 
 ## mimoskill — fill MiMo's gaps
 
-[mimoskill/](./mimoskill/) is a bundle of helper scripts + reference docs at the project root. It exists because some things MiMo just doesn't do natively (mainly: image generation), and Codex hardcodes a few capability assumptions on the client side that the proxy can't override.
+> 📖 **Full reference:** [doc/mimoskill.md](./doc/mimoskill.md) — per-script docs, env vars, triggering rules, three usage modes, recipes, troubleshooting. The section below is a quick summary.
+
+[mimoskill/](./mimoskill/) is a bundle of helper scripts + reference docs at the project root. It exists because some things MiMo just doesn't do natively (mainly: image generation, OCR fallback when the chat model is text-only), and Codex hardcodes a few capability assumptions on the client side that the proxy can't override.
 
 ### Why it exists
 

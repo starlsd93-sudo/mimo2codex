@@ -1,26 +1,32 @@
 # OCR / image recognition workflow
 
 `mimoskill/scripts/ocr.py` is the fallback path for reading or describing
-images when the surrounding chat model can't see them. It always calls
-`mimo-v2.5` (MiMo's vision-capable model) internally, regardless of which
-model the rest of the conversation is using.
+images when the surrounding chat model can't see them. Two engines:
+
+| Engine | Needs API key? | Quality | Notes |
+|---|---|---|---|
+| `mimo` | yes (`MIMO_API_KEY`) | best | Calls `mimo-v2.5` regardless of the chat model used elsewhere. |
+| `pollinations` | **no** | decent | Free public endpoint at `text.pollinations.ai`. Rate-limited but no signup. |
+
+`--engine auto` (default) picks `mimo` if `MIMO_API_KEY` is set, else falls
+back to `pollinations` so users with only a DeepSeek key (or no key at all)
+still get OCR.
 
 ## TL;DR
 
 ```bash
-export MIMO_API_KEY=sk-xxxxxxxxxxxxxxxx
-
-# default mode (text) — verbatim OCR
+# Zero-setup — uses free pollinations fallback when MIMO_API_KEY is unset
 python3 mimoskill/scripts/ocr.py path/to/image.png
-
-# describe the image in 2-4 sentences
 python3 mimoskill/scripts/ocr.py --mode describe path/to/image.png
-
-# structured JSON (text + regions + language + summary)
 python3 mimoskill/scripts/ocr.py --mode structured a.png b.jpg
-
-# re-render as GitHub-flavored Markdown
 python3 mimoskill/scripts/ocr.py --mode markdown form.png
+
+# Force the free engine even when you have a MiMo key (e.g. to save quota)
+python3 mimoskill/scripts/ocr.py --engine pollinations form.png
+
+# Best quality — set MiMo key
+export MIMO_API_KEY=sk-xxxxxxxxxxxxxxxx
+python3 mimoskill/scripts/ocr.py path/to/image.png   # auto -> mimo
 ```
 
 ## Why this skill exists
@@ -161,21 +167,39 @@ silently (one stderr line) rather than failing.
 
 ## When `MIMO_API_KEY` isn't set
 
-`ocr.py` exits with code `3` and this stderr message:
+`--engine auto` (the default) silently falls back to `pollinations`:
 
 ```
-error: MIMO_API_KEY is not set; ocr.py needs MiMo V2.5 vision to read images.
-  set one at https://platform.xiaomimimo.com/#/console/api-keys
-  OR if you want fully-local OCR with no API key, install tesseract:
-      macOS:    brew install tesseract tesseract-lang
-      Ubuntu:   sudo apt install tesseract-ocr tesseract-ocr-chi-sim
-      Windows:  https://github.com/UB-Mannheim/tesseract/wiki
-    then run: tesseract <image> - -l eng+chi_sim
-  (tesseract is NOT installed or invoked by this skill; this is just a pointer.)
+[engine] auto -> pollinations (free, no key). Set MIMO_API_KEY for higher quality (mimo-v2.5).
+[ocr] engine=pollinations mode=text model=openai images=1
+<extracted text>
 ```
 
-The tesseract pointer is **just a pointer** — this skill never auto-shells
-to it. Keeps the dependency surface predictable.
+Exit code `3` is only raised when the user explicitly passes `--engine mimo`
+without a key (passing the flag is treated as an assertion that MiMo should
+be used; auto-falling-back would mask the misconfiguration).
+
+If you'd rather use **fully-local OCR** with no network at all, install
+tesseract and shell to it directly — this skill won't auto-invoke it:
+
+```bash
+macOS:    brew install tesseract tesseract-lang
+Ubuntu:   sudo apt install tesseract-ocr tesseract-ocr-chi-sim
+Windows:  https://github.com/UB-Mannheim/tesseract/wiki
+tesseract <image> - -l eng+chi_sim
+```
+
+## Pollinations specifics
+
+- Endpoint: `https://text.pollinations.ai/openai` (OpenAI Chat Completions
+  compatible).
+- Default model: `openai` (vision-capable). Override with
+  `--pollinations-model <name>` or `POLLINATIONS_MODEL=<name>`. Other
+  vision-capable picks include `openai-large`, `openai-fast`.
+- No `Authorization` header is sent; the service is open. Rate limits apply
+  per-IP; if you hit them you'll see HTTP 429 in stderr — wait or retry.
+- `reasoning_content` is normally empty for pollinations responses (the
+  underlying models don't expose chain-of-thought).
 
 ## Common pitfalls
 
@@ -194,9 +218,9 @@ to it. Keeps the dependency surface predictable.
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | MiMo HTTP error (error body printed to stderr) |
+| 1 | Upstream HTTP error (MiMo or Pollinations; error body printed to stderr) |
 | 2 | argv / usage error (no image, mutually exclusive flags, etc.) |
-| 3 | `MIMO_API_KEY` not set |
+| 3 | `--engine mimo` explicitly requested but `MIMO_API_KEY` not set |
 | 4 | Local image file not found / unreadable |
 
 ## Composing with `mimo_chat.py`

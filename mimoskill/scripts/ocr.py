@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-ocr.py — OCR / image recognition via Xiaomi MiMo V2.5 vision.
+ocr.py — OCR / image recognition that works without any API key.
 
 Use this when the surrounding chat model can't see images (mimo-v2.5-pro,
-mimo-v2.5-pro[1m], mimo-v2-flash, or any third-party model without vision).
-ocr.py always calls mimo-v2.5 internally regardless of what the rest of the
-conversation is using.
+mimo-v2.5-pro[1m], mimo-v2-flash, deepseek-*, or any text-only model).
+
+Engines (--engine):
+  auto          (default) — mimo if MIMO_API_KEY set, else pollinations
+  mimo          — Xiaomi MiMo V2.5 vision. Highest quality. Needs MIMO_API_KEY
+  pollinations  — pollinations.ai free public vision endpoint. NO KEY REQUIRED
 
 Modes (--mode):
   text       (default) verbatim OCR — raw text, preserves line breaks
@@ -21,9 +24,12 @@ Image inputs (positional, 0+):
   (none, stdin not a TTY)    same as `-`
 
 Usage:
-    export MIMO_API_KEY=sk-xxxx
+    # Zero-setup: free fallback, works for DeepSeek-only / no-key users
     python3 ocr.py path/to/image.png
     python3 ocr.py --mode describe https://example.com/x.png
+
+    # Best quality (needs MiMo key)
+    export MIMO_API_KEY=sk-xxxx
     python3 ocr.py --mode structured a.png b.jpg
     cat scan.png | python3 ocr.py --mode markdown
 
@@ -194,26 +200,32 @@ def build_messages(
 
 # --- HTTP -------------------------------------------------------------------
 
-def post(url: str, body: dict[str, Any], api_key: str, stream: bool) -> Any:
+POLLINATIONS_URL = "https://text.pollinations.ai/openai"
+POLLINATIONS_DEFAULT_MODEL = "openai"  # vision-capable, free, no key
+
+
+def post(url: str, body: dict[str, Any], api_key: str | None, stream: bool, *, engine: str) -> Any:
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream" if stream else "application/json",
+        "User-Agent": "mimoskill-ocr/0.1",
+    }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(
         url,
         method="POST",
         data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream" if stream else "application/json",
-            "Authorization": f"Bearer {api_key}",
-            "User-Agent": "mimoskill-ocr/0.1",
-        },
+        headers=headers,
     )
     try:
         return urllib.request.urlopen(req, timeout=300)
     except urllib.error.HTTPError as e:
         snippet = e.read().decode("utf-8", "replace")
-        sys.stderr.write(f"MiMo returned HTTP {e.code}: {snippet}\n")
+        sys.stderr.write(f"{engine} returned HTTP {e.code}: {snippet}\n")
         sys.exit(1)
     except urllib.error.URLError as e:
-        sys.stderr.write(f"connection failed: {e}\n")
+        sys.stderr.write(f"connection failed ({engine}): {e}\n")
         sys.exit(1)
 
 
@@ -290,9 +302,22 @@ def main() -> None:
     p.add_argument("--max-tokens", type=int, default=4096)
     p.add_argument("--temperature", type=float, default=0.2)
     p.add_argument(
+        "--engine",
+        choices=["auto", "mimo", "pollinations"],
+        default=os.environ.get("MIMO_OCR_ENGINE", "auto"),
+        help="OCR backend. auto = mimo if MIMO_API_KEY set, else pollinations "
+        "(free, no key required). default: %(default)s",
+    )
+    p.add_argument(
         "--base-url",
         default=os.environ.get("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1"),
-        help="MiMo OpenAI-compat endpoint (default: %(default)s)",
+        help="MiMo OpenAI-compat endpoint, ignored when --engine=pollinations "
+        "(default: %(default)s)",
+    )
+    p.add_argument(
+        "--pollinations-model",
+        default=os.environ.get("POLLINATIONS_MODEL", POLLINATIONS_DEFAULT_MODEL),
+        help="model id when --engine=pollinations (default: %(default)s)",
     )
     p.add_argument(
         "--prompt",
@@ -304,18 +329,27 @@ def main() -> None:
     args = p.parse_args()
 
     api_key = os.environ.get("MIMO_API_KEY")
-    if not api_key:
-        sys.stderr.write(
-            "error: MIMO_API_KEY is not set; ocr.py needs MiMo V2.5 vision to read images.\n"
-            "  set one at https://platform.xiaomimimo.com/#/console/api-keys\n"
-            "  OR if you want fully-local OCR with no API key, install tesseract:\n"
-            "      macOS:    brew install tesseract tesseract-lang\n"
-            "      Ubuntu:   sudo apt install tesseract-ocr tesseract-ocr-chi-sim\n"
-            "      Windows:  https://github.com/UB-Mannheim/tesseract/wiki\n"
-            "    then run: tesseract <image> - -l eng+chi_sim\n"
-            "  (tesseract is NOT installed or invoked by this skill; this is just a pointer.)\n"
-        )
-        sys.exit(3)
+
+    # Resolve engine.
+    if args.engine == "mimo":
+        engine = "mimo"
+        if not api_key:
+            sys.stderr.write(
+                "error: --engine mimo requires MIMO_API_KEY.\n"
+                "  set one at https://platform.xiaomimimo.com/#/console/api-keys\n"
+                "  OR drop the flag to fall back to pollinations (free, no key required):\n"
+                "      python3 ocr.py <image>\n"
+            )
+            sys.exit(3)
+    elif args.engine == "pollinations":
+        engine = "pollinations"
+    else:  # auto
+        engine = "mimo" if api_key else "pollinations"
+        if engine == "pollinations":
+            sys.stderr.write(
+                "[engine] auto -> pollinations (free, no key). "
+                "Set MIMO_API_KEY for higher quality (mimo-v2.5).\n"
+            )
 
     # Resolve images: explicit args, else stdin if not a TTY.
     raw_args = args.images
@@ -330,12 +364,20 @@ def main() -> None:
 
     image_urls = [resolve_image_arg(a) for a in raw_args]
 
-    model, note = pick_model(args.model)
-    if note:
-        sys.stderr.write(note)
+    if engine == "mimo":
+        model, note = pick_model(args.model)
+        if note:
+            sys.stderr.write(note)
+    else:
+        if args.model:
+            sys.stderr.write(
+                f"note: --model is mimo-specific; ignoring on pollinations "
+                f"(use --pollinations-model instead).\n"
+            )
+        model = args.pollinations_model
 
     sys.stderr.write(
-        f"[ocr] mode={args.mode} model={model} images={len(image_urls)}\n"
+        f"[ocr] engine={engine} mode={args.mode} model={model} images={len(image_urls)}\n"
     )
 
     messages = build_messages(
@@ -348,13 +390,20 @@ def main() -> None:
     body: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "max_completion_tokens": args.max_tokens,
         "temperature": args.temperature,
         "stream": args.stream,
     }
+    if engine == "mimo":
+        # MiMo's quirk: max_completion_tokens, not max_tokens.
+        body["max_completion_tokens"] = args.max_tokens
+        url = args.base_url.rstrip("/") + "/chat/completions"
+        auth = api_key
+    else:
+        body["max_tokens"] = args.max_tokens
+        url = POLLINATIONS_URL
+        auth = None
 
-    url = args.base_url.rstrip("/") + "/chat/completions"
-    resp = post(url, body, api_key, args.stream)
+    resp = post(url, body, auth, args.stream, engine=engine)
 
     if args.stream:
         content, reasoning = stream_chat(resp)
