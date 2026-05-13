@@ -8,7 +8,7 @@ import {
   callResponsesPassthrough,
   UpstreamError,
 } from "./upstream/openaiCompatClient.js";
-import { byClientModel, PROVIDER_LIST, PROVIDERS } from "./providers/registry.js";
+import { BUILTIN_PROVIDERS, PROVIDER_LIST, PROVIDERS } from "./providers/registry.js";
 import type { Provider, ProviderRuntime } from "./providers/types.js";
 import { makeServerResponseSink } from "./util/sse.js";
 import { log } from "./util/log.js";
@@ -130,10 +130,15 @@ function countToolCallsInChatResponse(resp: ChatResponse | undefined): number | 
 }
 
 // Route a request to a provider based on the client-supplied model field:
-//   1. If the model matches an enabled non-default provider's catalog → switch.
-//   2. Otherwise use the configured default provider; the body.model is
-//      rewritten to the default provider's defaultModel so we never forward
-//      an unknown id (which would 400 at the upstream).
+//   1. Walk every registered provider (built-ins first, then user-declared
+//      generics). Pick the first one whose catalog contains the client model
+//      AND has an API key configured. This lets generics shadow built-in
+//      model names when the built-in has no key — e.g. an internal MiMo
+//      proxy declared as a generic can serve `mimo-v2.5-pro` without the
+//      built-in MiMo provider intercepting and triggering a rewrite.
+//   2. If no provider with a key matches, use the configured default
+//      provider; the body.model is rewritten to the default provider's
+//      defaultModel so we never forward an unknown id.
 //
 // Whenever the model id is rewritten on the way out (e.g. an unknown
 // `mimo-v2.5-vision-preview` is fallen back to `mimo-v2.5-pro`), we attach a
@@ -141,31 +146,66 @@ function countToolCallsInChatResponse(resp: ChatResponse | undefined): number | 
 // hide capability mismatches like vision support and are the root of bugs
 // where a client thinks it's calling `mimo-v2.5` but the proxy sent
 // `mimo-v2.5-pro` upstream.
+// Compute built-in provider IDs from the canonical source in registry.ts.
+// Generic providers are forbidden from using these (RESERVED_IDS in generic.ts),
+// so checking the id reliably distinguishes built-ins from user-declared generics.
+const BUILTIN_IDS = new Set(BUILTIN_PROVIDERS.map((p) => p.id));
+
 function selectProvider(clientModel: string, cfg: Config): SelectedProvider {
-  const matched = byClientModel(clientModel);
-  if (matched && cfg.providers[matched.id]) {
-    const resolved = matched.resolveModel(clientModel);
-    const upstreamModel = resolved?.id ?? matched.defaultModel;
+  // Pass 1: user-declared generic providers (non-empty models, has key).
+  // Generics take priority over built-ins so that an internal MiMo/DeepSeek
+  // proxy declared as a generic can serve the same model names (e.g.
+  // `mimo-v2.5-pro`) without the built-in intercepting.
+  for (const p of PROVIDER_LIST) {
+    if (BUILTIN_IDS.has(p.id)) continue;
+    const isOpenCatalog = !p.builtinModels || p.builtinModels.length === 0;
+    if (isOpenCatalog) continue;
+    if (!p.resolveModel(clientModel)) continue;
+    const runtime = cfg.providers[p.id];
+    if (!runtime) continue;
+    const resolved = p.resolveModel(clientModel);
     return {
-      provider: matched,
-      runtime: cfg.providers[matched.id]!,
-      upstreamModel,
+      provider: p,
+      runtime,
+      upstreamModel: resolved?.id ?? p.defaultModel,
       rewriteNotice: resolved
         ? null
         : {
             from: clientModel,
-            to: upstreamModel,
+            to: p.defaultModel,
             reason: "matched provider catalog but unknown model id → using provider's defaultModel",
           },
     };
   }
+
+  // Pass 2: built-in providers (mimo, deepseek) — only reached when no
+  // generic claimed this model id.
+  for (const p of PROVIDER_LIST) {
+    if (!BUILTIN_IDS.has(p.id)) continue;
+    if (!p.resolveModel(clientModel)) continue;
+    const runtime = cfg.providers[p.id];
+    if (!runtime) continue;
+    const resolved = p.resolveModel(clientModel);
+    return {
+      provider: p,
+      runtime,
+      upstreamModel: resolved?.id ?? p.defaultModel,
+      rewriteNotice: resolved
+        ? null
+        : {
+            from: clientModel,
+            to: p.defaultModel,
+            reason: "matched provider catalog but unknown model id → using provider's defaultModel",
+          },
+    };
+  }
+
+  // No provider with a key matches → fall back to the default provider.
   const provider = PROVIDERS[cfg.defaultProviderId];
   const runtime = cfg.providers[cfg.defaultProviderId];
   if (!runtime) {
     throw new Error(`provider ${cfg.defaultProviderId} has no runtime (missing api key)`);
   }
-  // Unknown model → use the default provider's defaultModel so we don't pass
-  // a foreign id to the upstream.
   const resolved = provider.resolveModel(clientModel);
   const upstreamModel = resolved?.id ?? provider.defaultModel;
   return {
