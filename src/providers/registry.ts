@@ -6,7 +6,7 @@ import type { Provider, ProviderId } from "./types.js";
 // at startup (from providers.json or GENERIC_* env vars) are appended via
 // initRegistry() before buildConfig() runs. The registry is mutable state
 // but transitions only once per process — there is no hot reload.
-const BUILTIN_PROVIDERS: readonly Provider[] = [mimo, deepseek];
+export const BUILTIN_PROVIDERS: readonly Provider[] = [mimo, deepseek];
 
 // Single mutable container objects. Importers keep their reference and see
 // the updated contents after initRegistry() runs. This avoids Proxy gymnastics
