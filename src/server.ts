@@ -15,7 +15,22 @@ import { log } from "./util/log.js";
 import type { ChatRequest, ChatResponse, ChatUsage, ResponsesRequest } from "./translate/types.js";
 import { handleAdmin } from "./admin/router.js";
 import { insertLog, type ChatLogEntry } from "./db/logs.js";
+import { getActiveOverride, type ActiveOverride } from "./db/overrides.js";
 import { redactSensitive } from "./util/redact.js";
+
+// Wraps getActiveOverride() so the per-request DB lookup is safe when:
+//   - admin is disabled (no DB open → getDb() would throw),
+//   - the settings table is missing for any reason,
+//   - the rows have been deleted concurrently.
+// Returns null in every error path; selectProvider treats null as "no override".
+function readActiveOverrideSafely(cfg: Config): ActiveOverride | null {
+  if (!cfg.adminEnabled) return null;
+  try {
+    return getActiveOverride();
+  } catch {
+    return null;
+  }
+}
 
 const KEEPALIVE_INTERVAL_MS = 15_000;
 
@@ -155,7 +170,48 @@ function countToolCallsInChatResponse(resp: ChatResponse | undefined): number | 
 // so checking the id reliably distinguishes built-ins from user-declared generics.
 const BUILTIN_IDS = new Set(BUILTIN_PROVIDERS.map((p) => p.id));
 
-export function selectProvider(clientModel: string, cfg: Config): SelectedProvider {
+// Optional "force this (provider, model)" hint from the admin UI's
+// runtime-override feature. selectProvider does not read this from the DB
+// itself — the call site fetches it and passes it in, keeping selectProvider
+// pure and testable in isolation.
+export interface ProviderOverride {
+  providerId: string;
+  modelId: string;
+}
+
+export function selectProvider(
+  clientModel: string,
+  cfg: Config,
+  override?: ProviderOverride | null
+): SelectedProvider {
+  // Pass 0: runtime override set via the webui. Always wins over normal
+  // routing — but only when both the provider is registered AND has a
+  // runtime (api key) available. Stale overrides (provider removed from
+  // providers.json after restart, or env key dropped) fall through to the
+  // normal 3-pass logic so requests don't hard-fail on a bad override.
+  if (override && override.providerId && override.modelId) {
+    const p = PROVIDERS[override.providerId as keyof typeof PROVIDERS];
+    const runtime = p ? cfg.providers[p.id] : null;
+    if (p && runtime) {
+      const resolved = p.resolveModel(override.modelId);
+      const upstreamModel = resolved?.id ?? override.modelId;
+      return {
+        provider: p,
+        runtime,
+        upstreamModel,
+        modelInfo: resolved ?? p.resolveModel(p.defaultModel),
+        rewriteNotice: resolved
+          ? null
+          : {
+              from: clientModel,
+              to: upstreamModel,
+              reason: `runtime override → ${p.id}/${override.modelId} (model id not in provider catalog, forwarded verbatim)`,
+            },
+      };
+    }
+    // override unusable → fall through silently
+  }
+
   // Pass 1: user-declared generic providers (non-empty models, has key).
   // Generics take priority over built-ins so that an internal MiMo/DeepSeek
   // proxy declared as a generic can serve the same model names (e.g.
@@ -283,7 +339,11 @@ async function handleResponses(
     return respondToResponsesProbe(payload, res, !!payload.stream);
   }
 
-  const { provider, runtime, upstreamModel, modelInfo, rewriteNotice } = selectProvider(payload.model, cfg);
+  const { provider, runtime, upstreamModel, modelInfo, rewriteNotice } = selectProvider(
+    payload.model,
+    cfg,
+    readActiveOverrideSafely(cfg)
+  );
   log.debug(`routing to provider=${provider.id}`, {
     baseUrl: runtime.baseUrl,
     clientModel: payload.model,
@@ -844,7 +904,11 @@ async function handleChatPassthrough(
     return respondToChatProbe(payload, res, !!payload.stream);
   }
 
-  const { provider, runtime, upstreamModel, modelInfo, rewriteNotice } = selectProvider(payload.model, cfg);
+  const { provider, runtime, upstreamModel, modelInfo, rewriteNotice } = selectProvider(
+    payload.model,
+    cfg,
+    readActiveOverrideSafely(cfg)
+  );
   log.debug(`routing chat passthrough to provider=${provider.id}`, {
     clientModel: payload.model,
     upstreamModel,

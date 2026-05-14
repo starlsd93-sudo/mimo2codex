@@ -180,6 +180,59 @@ export interface TokenTimeseriesResponse {
   series: TokenTimeseriesSeries[];
 }
 
+// ───────── Codex 启用 ─────────
+
+export interface CodexTarget {
+  providerId: string;
+  providerDisplayName: string;
+  providerKey: string;
+  modelId: string;
+  displayName: string | null;
+  contextWindow: number | null;
+  maxOutputTokens: number | null;
+  source: "builtin" | "custom";
+  hasKey: boolean;
+  isCurrentOverride: boolean;
+}
+
+export interface ActiveOverride {
+  providerId: string;
+  modelId: string;
+}
+
+export interface CodexBackupPair {
+  ts: number;
+  authBackup: string | null;
+  tomlBackup: string | null;
+}
+
+export interface CodexState {
+  codexDir: string;
+  authPath: string;
+  tomlPath: string;
+  authJsonOwner: "mimo2codex" | "external" | "missing";
+  authJsonExists: boolean;
+  configTomlExists: boolean;
+  configTomlText: string | null;
+  backups: CodexBackupPair[];
+  activeOverride: ActiveOverride | null;
+}
+
+export interface CodexTargetsResponse {
+  targets: CodexTarget[];
+  activeOverride: ActiveOverride | null;
+  authJsonOwner: "mimo2codex" | "external" | "missing";
+}
+
+export interface CodexApplyResponse {
+  ok: boolean;
+  backupTs: number;
+  authBackup: string | null;
+  tomlBackup: string | null;
+  authJsonOwnerBefore: "mimo2codex" | "external" | "missing";
+  restartRequired: boolean;
+}
+
 export const api = {
   health: () => request<{ ok: boolean; dataDir: string; version: string }>("GET", "/health"),
   providers: () => request<{ providers: ProviderInfo[] }>("GET", "/providers"),
@@ -230,4 +283,16 @@ export const api = {
       "/generic-providers",
       { providers }
     ),
+  codexState: () => request<CodexState>("GET", "/codex-state"),
+  codexTargets: () => request<CodexTargetsResponse>("GET", "/codex-targets"),
+  codexApply: (body: { providerId: string; modelId: string }) =>
+    request<CodexApplyResponse>("POST", "/codex-apply", body),
+  codexRestore: (ts: number) =>
+    request<{ ok: boolean; restartRequired: boolean }>("POST", "/codex-restore", { ts }),
+  getActiveOverride: () =>
+    request<{ override: ActiveOverride | null }>("GET", "/active-override"),
+  setActiveOverride: (body: { providerId: string; modelId: string }) =>
+    request<{ override: ActiveOverride }>("PUT", "/active-override", body),
+  clearActiveOverride: () =>
+    request<{ deleted: boolean }>("DELETE", "/active-override"),
 };

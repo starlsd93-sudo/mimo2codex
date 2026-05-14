@@ -134,3 +134,82 @@ describe("selectProvider routing priority (PR #6 regression)", () => {
     expect(sel.rewriteNotice).toBeNull();
   });
 });
+
+describe("selectProvider runtime override (Pass 0)", () => {
+  it("case G: valid override wins over normal routing", () => {
+    initRegistry([]);
+    const cfg = makeConfig({
+      defaultProviderId: "mimo",
+      providers: { mimo: fakeRuntime, deepseek: fakeRuntime },
+    });
+    // Client asks for a mimo model, but override forces deepseek.
+    const sel = selectProvider("mimo-v2.5-pro", cfg, {
+      providerId: "deepseek",
+      modelId: "deepseek-v4-pro",
+    });
+    expect(sel.provider.id).toBe("deepseek");
+    expect(sel.upstreamModel).toBe("deepseek-v4-pro");
+    expect(sel.rewriteNotice).toBeNull();
+  });
+
+  it("case H: override pointing at unknown providerId is ignored (falls back to normal routing)", () => {
+    initRegistry([]);
+    const cfg = makeConfig({
+      defaultProviderId: "mimo",
+      providers: { mimo: fakeRuntime, deepseek: null },
+    });
+    const sel = selectProvider("mimo-v2.5-pro", cfg, {
+      providerId: "ghost-provider",
+      modelId: "ghost-model",
+    });
+    // Falls through to Pass 2 (built-in mimo with key).
+    expect(sel.provider.id).toBe("mimo");
+    expect(sel.upstreamModel).toBe("mimo-v2.5-pro");
+    expect(sel.rewriteNotice).toBeNull();
+  });
+
+  it("case I: override at a provider with no runtime is ignored", () => {
+    initRegistry([]);
+    const cfg = makeConfig({
+      defaultProviderId: "mimo",
+      // deepseek registered but has no api key.
+      providers: { mimo: fakeRuntime, deepseek: null },
+    });
+    const sel = selectProvider("mimo-v2.5-pro", cfg, {
+      providerId: "deepseek",
+      modelId: "deepseek-v4-pro",
+    });
+    expect(sel.provider.id).toBe("mimo");
+    expect(sel.rewriteNotice).toBeNull();
+  });
+
+  it("case J: override with unknown modelId still routes to that provider, sets rewriteNotice", () => {
+    initRegistry([]);
+    const cfg = makeConfig({
+      defaultProviderId: "mimo",
+      providers: { mimo: fakeRuntime, deepseek: fakeRuntime },
+    });
+    const sel = selectProvider("mimo-v2.5-pro", cfg, {
+      providerId: "deepseek",
+      modelId: "deepseek-experimental-99",
+    });
+    expect(sel.provider.id).toBe("deepseek");
+    // Unknown ids forwarded verbatim so the upstream can decide.
+    expect(sel.upstreamModel).toBe("deepseek-experimental-99");
+    expect(sel.rewriteNotice).not.toBeNull();
+    expect(sel.rewriteNotice?.reason).toContain("runtime override");
+  });
+
+  it("case K: override=null preserves all existing behavior (no regression)", () => {
+    initRegistry([createGenericProvider(companyMimoSpec)]);
+    const cfg = makeConfig({
+      defaultProviderId: "mimo",
+      providers: { mimo: fakeRuntime, deepseek: null, "company-mimo": fakeRuntime },
+    });
+    const sel = selectProvider("mimo-v2.5-pro", cfg, null);
+    // Same as case A.
+    expect(sel.provider.id).toBe("company-mimo");
+    expect(sel.upstreamModel).toBe("mimo-v2.5-pro");
+    expect(sel.rewriteNotice).toBeNull();
+  });
+});

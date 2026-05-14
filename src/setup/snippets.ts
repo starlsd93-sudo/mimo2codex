@@ -162,7 +162,17 @@ request_max_retries = 1
 // ~/.codex/auth.json + ~/.codex/config.toml when you switch providers.
 // This subcommand prints both snippets in a copy-pasteable form so users can
 // add mimo2codex as a custom Codex provider in cc-switch.
-export function ccSwitchSnippet(cfg: HostPort, target: SnippetTarget): string {
+// Bare file contents written to ~/.codex/auth.json and ~/.codex/config.toml.
+// Same shape ccswitch would write. Extracted so that:
+//   1. ccSwitchSnippet() can wrap it with markdown for the CLI / Setup page
+//   2. src/codex/state.ts can write these bytes directly when the user
+//      hits "启用" in the webui
+// Returned strings are intended to be the FULL file contents — they replace
+// any existing config.toml. Backing up the previous file is the caller's job.
+export function buildCcSwitchFiles(
+  cfg: HostPort,
+  target: SnippetTarget
+): { authJson: string; configToml: string } {
   const authJson = JSON.stringify({ OPENAI_API_KEY: "mimo2codex-local" }, null, 2);
   const configToml = `model_provider = "${target.providerKey}"
 model = "${target.modelId}"${modelTuningLines(target)}
@@ -176,6 +186,11 @@ wire_api = "responses"
 requires_openai_auth = true
 request_max_retries = 1
 `;
+  return { authJson, configToml };
+}
+
+export function ccSwitchSnippet(cfg: HostPort, target: SnippetTarget): string {
+  const { authJson, configToml } = buildCcSwitchFiles(cfg, target);
   return `# cc-switch — Add Provider → Codex tab → Custom
 
 # ───────── auth.json (paste into the auth.json textarea) ─────────
@@ -203,19 +218,7 @@ export interface SnippetBundle {
 
 export function buildSnippetBundle(providerHint: string | undefined, cfg: HostPort): SnippetBundle {
   const target = resolveSnippetTarget(providerHint);
-  const ccAuth = JSON.stringify({ OPENAI_API_KEY: "mimo2codex-local" }, null, 2);
-  const ccToml = `model_provider = "${target.providerKey}"
-model = "${target.modelId}"${modelTuningLines(target)}
-
-${alternativesComment(target)}
-
-[model_providers.${target.providerKey}]
-name = "${target.providerLabel}"
-base_url = "http://${cfg.host}:${cfg.port}/v1"
-wire_api = "responses"
-requires_openai_auth = true
-request_max_retries = 1
-`;
+  const { authJson: ccAuth, configToml: ccToml } = buildCcSwitchFiles(cfg, target);
   return {
     target,
     authJson: ccAuth,

@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "../config.js";
-import { PROVIDER_LIST } from "../providers/registry.js";
+import { PROVIDER_LIST, PROVIDERS } from "../providers/registry.js";
 import {
   aggregateMappings,
   aggregateStats,
@@ -31,7 +31,7 @@ import {
 import type { ProviderId } from "../providers/types.js";
 import { isProviderId } from "../providers/registry.js";
 import { log } from "../util/log.js";
-import { buildSnippetBundle } from "../setup/snippets.js";
+import { buildSnippetBundle, resolveSnippetTarget, tomlProviderKeyFor } from "../setup/snippets.js";
 import {
   GenericLoaderError,
   locateProvidersFile,
@@ -39,6 +39,12 @@ import {
   writeSpecsToFile,
 } from "../providers/genericLoader.js";
 import type { GenericProviderSpec } from "../providers/generic.js";
+import { applyCodex, readCodexState, restoreCodex } from "../codex/state.js";
+import {
+  clearActiveOverride,
+  getActiveOverride,
+  setActiveOverride,
+} from "../db/overrides.js";
 
 // Locate dist/web/ relative to THIS module's location, not process.cwd().
 // When mimo2codex is installed globally (`npm install -g`), the user invokes
@@ -431,6 +437,212 @@ async function handleApi(ctx: RouteContext): Promise<void> {
       return sendJson(res, 200, { deleted: true });
     }
     return sendError(res, 405, "method_not_allowed", "use PUT or DELETE");
+  }
+
+  // ──────────── Codex 启用 (replaces ccswitch) ────────────
+  //
+  // codex-state: read-only snapshot of ~/.codex/ ownership + backup list +
+  // active runtime override. UI reads this on every page load so it can
+  // surface the right warnings (e.g. "your auth.json has a real OpenAI key,
+  // overwriting will back it up").
+  if (req.method === "GET" && pathname === "/admin/api/codex-state") {
+    const state = readCodexState();
+    return sendJson(res, 200, {
+      ...state,
+      activeOverride: getActiveOverride(),
+    });
+  }
+
+  // codex-targets: aggregated (provider × model) pickable from the UI.
+  // Built-in models come from PROVIDER_LIST; custom models come from the
+  // sqlite models table. We surface hasKey so the UI can disable the
+  // runtime-override button on providers without an api key (the file-write
+  // button is fine without a key — the user might be setting up first).
+  if (req.method === "GET" && pathname === "/admin/api/codex-targets") {
+    const state = readCodexState();
+    const override = getActiveOverride();
+    const targets: Array<Record<string, unknown>> = [];
+    for (const p of PROVIDER_LIST) {
+      const runtime = cfg.providers[p.id];
+      // Built-in catalog (declared by Provider.builtinModels).
+      for (const m of p.builtinModels) {
+        if (m.deprecatedAfter) continue;
+        targets.push({
+          providerId: p.id,
+          providerDisplayName: p.displayName,
+          providerKey: tomlProviderKeyFor(p.id),
+          modelId: m.id,
+          displayName: m.displayName ?? null,
+          contextWindow: m.contextWindow ?? null,
+          maxOutputTokens: m.maxOutputTokens ?? null,
+          source: "builtin",
+          hasKey: !!runtime,
+          isCurrentOverride:
+            override?.providerId === p.id && override?.modelId === m.id,
+        });
+      }
+      // Custom models from the admin's models table — only when admin/db
+      // is up (we're inside the admin router, so it is).
+      try {
+        const customRows = listModels(p.id);
+        for (const row of customRows) {
+          if (row.is_builtin === 1) continue; // dedup against builtinModels above
+          targets.push({
+            providerId: p.id,
+            providerDisplayName: p.displayName,
+            providerKey: tomlProviderKeyFor(p.id),
+            modelId: row.upstream_id,
+            displayName: row.display_name ?? null,
+            contextWindow: row.context_window ?? null,
+            maxOutputTokens: null,
+            source: "custom",
+            hasKey: !!runtime,
+            isCurrentOverride:
+              override?.providerId === p.id && override?.modelId === row.upstream_id,
+          });
+        }
+      } catch {
+        // listModels needs db open; skip silently if it's not.
+      }
+    }
+    return sendJson(res, 200, {
+      targets,
+      activeOverride: override,
+      authJsonOwner: state.authJsonOwner,
+    });
+  }
+
+  // codex-apply: write ~/.codex/auth.json + config.toml for (provider, model).
+  // Replaces ccswitch. The user must restart Codex for changes to take effect.
+  if (req.method === "POST" && pathname === "/admin/api/codex-apply") {
+    let body: { providerId?: unknown; modelId?: unknown };
+    try {
+      body = await readJsonBody<{ providerId?: unknown; modelId?: unknown }>(req);
+    } catch (err) {
+      return sendError(res, 400, "invalid_json", (err as Error).message);
+    }
+    if (typeof body.providerId !== "string" || typeof body.modelId !== "string") {
+      return sendError(res, 400, "invalid_body", "providerId and modelId must be strings");
+    }
+    if (!isProviderId(body.providerId)) {
+      return sendError(res, 400, "unknown_provider", `unknown provider ${body.providerId}`);
+    }
+    const provider = PROVIDERS[body.providerId];
+    // Validate the model exists in either the built-in catalog or the
+    // custom-models table. Forwarding an arbitrary unknown id would write
+    // a config Codex can't actually use.
+    const builtinHit = provider.builtinModels.some((m) => m.id === body.modelId);
+    let customHit = false;
+    if (!builtinHit) {
+      try {
+        customHit = listModels(provider.id).some((r) => r.upstream_id === body.modelId);
+      } catch {
+        /* db not open — only built-in validation available */
+      }
+    }
+    if (!builtinHit && !customHit) {
+      return sendError(
+        res,
+        400,
+        "unknown_model",
+        `model "${body.modelId}" is not in ${provider.id}'s catalog`
+      );
+    }
+    // Build the SnippetTarget the writer expects. Reuse resolveSnippetTarget
+    // for the default, then override modelId so we honor the user's pick.
+    const baseTarget = resolveSnippetTarget(body.providerId);
+    const targetModelMeta = provider.builtinModels.find((m) => m.id === body.modelId);
+    const target = {
+      ...baseTarget,
+      modelId: body.modelId,
+      contextWindow: targetModelMeta?.contextWindow ?? baseTarget.contextWindow,
+      maxOutputTokens: targetModelMeta?.maxOutputTokens ?? baseTarget.maxOutputTokens,
+    };
+    try {
+      const result = applyCodex(target, { host: cfg.host, port: cfg.port });
+      log.info(
+        `codex profile applied via webui: provider=${provider.id} model=${body.modelId} ` +
+          `authJsonOwnerBefore=${result.authJsonOwnerBefore} backupTs=${result.backupTs}`
+      );
+      return sendJson(res, 200, {
+        ok: true,
+        backupTs: result.backupTs,
+        authBackup: result.authBackup,
+        tomlBackup: result.tomlBackup,
+        authJsonOwnerBefore: result.authJsonOwnerBefore,
+        restartRequired: true,
+      });
+    } catch (err) {
+      log.error("codex-apply failed", { error: (err as Error).message });
+      return sendError(res, 500, "apply_failed", (err as Error).message);
+    }
+  }
+
+  // codex-restore: undo a previous apply by restoring both files from a
+  // paired backup. ts comes from /codex-state.backups.
+  if (req.method === "POST" && pathname === "/admin/api/codex-restore") {
+    let body: { ts?: unknown };
+    try {
+      body = await readJsonBody<{ ts?: unknown }>(req);
+    } catch (err) {
+      return sendError(res, 400, "invalid_json", (err as Error).message);
+    }
+    if (typeof body.ts !== "number" || !Number.isFinite(body.ts)) {
+      return sendError(res, 400, "invalid_body", "ts must be a number");
+    }
+    try {
+      restoreCodex(body.ts);
+      log.info(`codex profile restored from backup ts=${body.ts}`);
+      return sendJson(res, 200, { ok: true, restartRequired: true });
+    } catch (err) {
+      const msg = (err as Error).message;
+      const code = msg.includes("no backup pair")
+        ? "not_found"
+        : msg.includes("incomplete")
+          ? "incomplete_pair"
+          : "restore_failed";
+      const status = code === "not_found" ? 404 : 400;
+      return sendError(res, status, code, msg);
+    }
+  }
+
+  // active-override: runtime model override stored in settings DB. Pass-0
+  // of selectProvider() honors it before any normal routing logic.
+  if (req.method === "GET" && pathname === "/admin/api/active-override") {
+    return sendJson(res, 200, { override: getActiveOverride() });
+  }
+  if (req.method === "PUT" && pathname === "/admin/api/active-override") {
+    let body: { providerId?: unknown; modelId?: unknown };
+    try {
+      body = await readJsonBody<{ providerId?: unknown; modelId?: unknown }>(req);
+    } catch (err) {
+      return sendError(res, 400, "invalid_json", (err as Error).message);
+    }
+    if (typeof body.providerId !== "string" || typeof body.modelId !== "string") {
+      return sendError(res, 400, "invalid_body", "providerId and modelId must be strings");
+    }
+    if (!isProviderId(body.providerId)) {
+      return sendError(res, 400, "unknown_provider", `unknown provider ${body.providerId}`);
+    }
+    // Require the provider to have a runtime (api key); without it the
+    // override would be silently ignored at request time and the user
+    // would think the switch worked.
+    if (!cfg.providers[body.providerId]) {
+      return sendError(
+        res,
+        400,
+        "provider_has_no_key",
+        `provider ${body.providerId} has no api key configured — override would have no effect`
+      );
+    }
+    setActiveOverride(body.providerId, body.modelId);
+    log.info(`active override set: provider=${body.providerId} model=${body.modelId}`);
+    return sendJson(res, 200, { override: { providerId: body.providerId, modelId: body.modelId } });
+  }
+  if (req.method === "DELETE" && pathname === "/admin/api/active-override") {
+    clearActiveOverride();
+    log.info("active override cleared");
+    return sendJson(res, 200, { deleted: true });
   }
 
   return sendError(res, 404, "not_found", `no admin route for ${req.method} ${pathname}`);

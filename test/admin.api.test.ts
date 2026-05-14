@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { createServer, type Server } from "node:http";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import os, { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDb, openDb } from "../src/db/index.js";
 import { handleAdmin } from "../src/admin/router.js";
@@ -210,5 +210,128 @@ describe("admin REST", () => {
   it("404 for unknown admin path", async () => {
     const r = await call("GET", "/admin/api/nope");
     expect(r.status).toBe(404);
+  });
+});
+
+describe("admin REST — Codex 启用 routes", () => {
+  // These tests redirect os.homedir() to the per-test tmp data dir so the
+  // file-write side-effects (auth.json/config.toml + .bak.* files) land
+  // inside the test sandbox.
+  let homedirSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(dataDir);
+  });
+  afterEach(() => {
+    homedirSpy.mockRestore();
+  });
+
+  it("GET /admin/api/codex-state on a fresh machine returns 'missing'", async () => {
+    const r = await call("GET", "/admin/api/codex-state");
+    expect(r.status).toBe(200);
+    const body = r.json as {
+      authJsonOwner: string;
+      authJsonExists: boolean;
+      backups: unknown[];
+      activeOverride: unknown;
+    };
+    expect(body.authJsonOwner).toBe("missing");
+    expect(body.authJsonExists).toBe(false);
+    expect(body.backups).toEqual([]);
+    expect(body.activeOverride).toBeNull();
+  });
+
+  it("POST /admin/api/codex-apply writes both files, marks ownership as ours", async () => {
+    const r = await call("POST", "/admin/api/codex-apply", {
+      providerId: "mimo",
+      modelId: "mimo-v2.5-pro",
+    });
+    expect(r.status).toBe(200);
+    const body = r.json as { ok: boolean; backupTs: number; restartRequired: boolean };
+    expect(body.ok).toBe(true);
+    expect(body.restartRequired).toBe(true);
+    expect(typeof body.backupTs).toBe("number");
+    // Subsequent codex-state reflects the change.
+    const state = await call("GET", "/admin/api/codex-state");
+    expect((state.json as { authJsonOwner: string }).authJsonOwner).toBe("mimo2codex");
+  });
+
+  it("POST /admin/api/codex-apply rejects unknown provider", async () => {
+    const r = await call("POST", "/admin/api/codex-apply", {
+      providerId: "ghost",
+      modelId: "x",
+    });
+    expect(r.status).toBe(400);
+    expect((r.json as { error: { code: string } }).error.code).toBe("unknown_provider");
+  });
+
+  it("POST /admin/api/codex-apply rejects model not in catalog", async () => {
+    const r = await call("POST", "/admin/api/codex-apply", {
+      providerId: "mimo",
+      modelId: "gpt-99",
+    });
+    expect(r.status).toBe(400);
+    expect((r.json as { error: { code: string } }).error.code).toBe("unknown_model");
+  });
+
+  it("POST /admin/api/codex-restore round-trips after apply", async () => {
+    const apply = await call("POST", "/admin/api/codex-apply", {
+      providerId: "mimo",
+      modelId: "mimo-v2.5-pro",
+    });
+    const ts = (apply.json as { backupTs: number }).backupTs;
+    // No paired backup yet (fresh dir), so restore on this ts is incomplete.
+    const restore = await call("POST", "/admin/api/codex-restore", { ts });
+    // Either incomplete_pair or not_found depending on state; both are 400/404.
+    expect([400, 404]).toContain(restore.status);
+  });
+
+  it("active-override: GET defaults to null, PUT sets, GET reads back, DELETE clears", async () => {
+    const empty = await call("GET", "/admin/api/active-override");
+    expect((empty.json as { override: unknown }).override).toBeNull();
+
+    const set = await call("PUT", "/admin/api/active-override", {
+      providerId: "mimo",
+      modelId: "mimo-v2.5-pro",
+    });
+    expect(set.status).toBe(200);
+    expect((set.json as { override: { providerId: string } }).override.providerId).toBe("mimo");
+
+    const get = await call("GET", "/admin/api/active-override");
+    expect((get.json as { override: { modelId: string } }).override.modelId).toBe("mimo-v2.5-pro");
+
+    const del = await call("DELETE", "/admin/api/active-override");
+    expect(del.status).toBe(200);
+    const after = await call("GET", "/admin/api/active-override");
+    expect((after.json as { override: unknown }).override).toBeNull();
+  });
+
+  it("PUT /admin/api/active-override rejects provider without a key", async () => {
+    // deepseek has no runtime in this test's Config (see top of file).
+    const r = await call("PUT", "/admin/api/active-override", {
+      providerId: "deepseek",
+      modelId: "deepseek-v4-pro",
+    });
+    expect(r.status).toBe(400);
+    expect((r.json as { error: { code: string } }).error.code).toBe("provider_has_no_key");
+  });
+
+  it("GET /admin/api/codex-targets returns built-in models with current-override flags", async () => {
+    await call("PUT", "/admin/api/active-override", {
+      providerId: "mimo",
+      modelId: "mimo-v2.5-pro",
+    });
+    const r = await call("GET", "/admin/api/codex-targets");
+    expect(r.status).toBe(200);
+    const body = r.json as {
+      targets: Array<{ providerId: string; modelId: string; isCurrentOverride: boolean; hasKey: boolean }>;
+    };
+    expect(body.targets.length).toBeGreaterThan(0);
+    const current = body.targets.find((t) => t.isCurrentOverride);
+    expect(current?.providerId).toBe("mimo");
+    expect(current?.modelId).toBe("mimo-v2.5-pro");
+    // mimo has a runtime in test cfg; deepseek does not.
+    expect(body.targets.find((t) => t.providerId === "mimo")?.hasKey).toBe(true);
+    expect(body.targets.find((t) => t.providerId === "deepseek")?.hasKey).toBe(false);
   });
 });

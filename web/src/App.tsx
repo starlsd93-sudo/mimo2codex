@@ -7,6 +7,7 @@ import { Logs } from "./pages/Logs";
 import { Settings } from "./pages/Settings";
 import { Setup } from "./pages/Setup";
 import { Providers } from "./pages/Providers";
+import { CodexEnable } from "./pages/CodexEnable";
 
 const GITHUB_REPO = "https://github.com/7as0nch/mimo2codex";
 
@@ -22,6 +23,9 @@ export function App() {
             </NavLink>
             <NavLink to="/setup" className={({ isActive }) => (isActive ? "active" : "")}>
               对接指引
+            </NavLink>
+            <NavLink to="/codex-enable" className={({ isActive }) => (isActive ? "active" : "")}>
+              Codex 启用
             </NavLink>
             <NavLink to="/providers" className={({ isActive }) => (isActive ? "active" : "")}>
               通用 Provider
@@ -41,6 +45,7 @@ export function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/setup" element={<Setup />} />
+            <Route path="/codex-enable" element={<CodexEnable />} />
             <Route path="/providers" element={<Providers />} />
             <Route path="/models" element={<Models />} />
             <Route path="/logs" element={<Logs />} />
