@@ -558,8 +558,59 @@ function inputItemsToMessages(
     }
   }
   flushAssistant(out, state);
+  removeOrphanToolMessages(out);
   ensureToolCallsHaveOutputs(out);
   return out;
+}
+
+// Reverse direction of ensureToolCallsHaveOutputs: drop orphan
+// `{role: "tool"}` messages whose `tool_call_id` has NO preceding
+// assistant.tool_calls in scope.
+//
+// Triggered when Codex session state desyncs:
+//   - user interrupts a parallel-tool-call turn mid-flight
+//   - partial replay after a crash / undo / redo
+//   - Codex internal bug that drops the parent assistant.tool_calls
+//     while keeping its tool outputs (openai/codex#8479)
+//
+// Without this scrub, DeepSeek V4 400s with:
+//   "Messages with role 'tool' must be a response to a preceding message
+//    with 'tool_calls'"
+// and the whole session becomes unrecoverable
+// (mimo2codex#8 — same symptom).
+//
+// Scope rule: a tool message is valid only when it directly follows an
+// assistant message that declared its tool_call_id. Any other message
+// type (user / system / etc.) resets the validity window — a tool
+// message that appears after a user message but before any
+// assistant.tool_calls is an orphan and must be removed.
+function removeOrphanToolMessages(messages: ChatMessage[]): void {
+  let validIds: Set<string> | null = null;
+  let i = 0;
+  while (i < messages.length) {
+    const m = messages[i];
+    if (m.role === "assistant") {
+      validIds =
+        m.tool_calls && m.tool_calls.length > 0
+          ? new Set(m.tool_calls.map((tc) => tc.id).filter(Boolean) as string[])
+          : null;
+      i++;
+    } else if (m.role === "tool") {
+      if (validIds && m.tool_call_id && validIds.has(m.tool_call_id)) {
+        i++;
+      } else {
+        log.warn(
+          `dropped orphan tool message: tool_call_id=${m.tool_call_id} (no preceding assistant.tool_calls in scope)`,
+        );
+        messages.splice(i, 1);
+        // do NOT increment i — splice shifted next element into position i
+      }
+    } else {
+      // user / system / other — reset tool-receiving window
+      validIds = null;
+      i++;
+    }
+  }
 }
 
 // Defensive backstop: every assistant message with `tool_calls` must be
