@@ -5,6 +5,8 @@ import {
   Button,
   Card,
   Descriptions,
+  Input,
+  message,
   Modal,
   Space,
   Table,
@@ -12,11 +14,18 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { ThunderboltOutlined } from "@ant-design/icons";
+import {
+  CheckOutlined,
+  CloseOutlined,
+  EditOutlined,
+  ReloadOutlined,
+  ThunderboltOutlined,
+} from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import {
   api,
   type CodexBackupPair,
+  type CodexDirInfo,
   type CodexState,
   type CodexTarget,
   type CodexTargetsResponse,
@@ -46,6 +55,7 @@ export function CodexEnable() {
   const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
   const [probes, setProbes] = useState<Record<string, ProbeState>>({});
+  const [codexDirInfo, setCodexDirInfo] = useState<CodexDirInfo | null>(null);
 
   async function doProbe(target: CodexTarget) {
     const key = `${target.providerId}::${target.modelId}`;
@@ -74,9 +84,14 @@ export function CodexEnable() {
   async function load() {
     try {
       setError(null);
-      const [s, ts] = await Promise.all([api.codexState(), api.codexTargets()]);
+      const [s, ts, dirInfo] = await Promise.all([
+        api.codexState(),
+        api.codexTargets(),
+        api.codexDir(),
+      ]);
       setState(s);
       setTargetsResp(ts);
+      setCodexDirInfo(dirInfo);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -298,7 +313,13 @@ export function CodexEnable() {
         />
       )}
 
-      {state && <CurrentStateCard state={state} />}
+      {state && (
+        <CurrentStateCard
+          state={state}
+          dirInfo={codexDirInfo}
+          onReload={() => void load()}
+        />
+      )}
 
       {state && (
         <Card title={t("targets.title")} style={{ marginBottom: 16 }}>
@@ -345,7 +366,15 @@ export function CodexEnable() {
   );
 }
 
-function CurrentStateCard({ state }: { state: CodexState }) {
+function CurrentStateCard({
+  state,
+  dirInfo,
+  onReload,
+}: {
+  state: CodexState;
+  dirInfo: CodexDirInfo | null;
+  onReload: () => void;
+}) {
   const { t } = useTranslation("codexEnable");
   const ownerTag =
     state.authJsonOwner === "mimo2codex" ? (
@@ -368,7 +397,13 @@ function CurrentStateCard({ state }: { state: CodexState }) {
           {
             key: "codexDir",
             label: t("state.codexDir"),
-            children: <code>{state.codexDir}</code>,
+            children: (
+              <CodexDirRow
+                effective={state.codexDir}
+                dirInfo={dirInfo}
+                onReload={onReload}
+              />
+            ),
           },
           {
             key: "auth",
@@ -742,6 +777,153 @@ function BackupCard({
         locale={{ emptyText: t("backup.empty") }}
       />
     </Card>
+  );
+}
+
+function CodexDirRow({
+  effective,
+  dirInfo,
+  onReload,
+}: {
+  effective: string;
+  dirInfo: CodexDirInfo | null;
+  onReload: () => void;
+}) {
+  const { t } = useTranslation("codexEnable");
+  const { t: tCommon } = useTranslation("common");
+  const [messageApi, msgCtx] = message.useMessage();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(effective);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Whenever the parent reloads (post-save / post-reset) sync the draft so
+  // the next edit starts from the new effective value.
+  useEffect(() => {
+    if (!editing) setDraft(effective);
+  }, [effective, editing]);
+
+  const source = dirInfo?.source ?? "default";
+  const sourceLabel =
+    source === "user"
+      ? t("state.codexDirSourceUser")
+      : source === "env"
+        ? t("state.codexDirSourceEnv")
+        : t("state.codexDirSourceDefault");
+
+  async function save() {
+    const trimmed = draft.trim();
+    if (!trimmed) {
+      setError(t("state.codexDirPlaceholder"));
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await api.setCodexDir(trimmed);
+      setEditing(false);
+      messageApi.success(t("state.codexDirSaved"));
+      onReload();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function reset() {
+    setSaving(true);
+    setError(null);
+    try {
+      await api.clearCodexDir();
+      setEditing(false);
+      messageApi.success(t("state.codexDirReseted"));
+      onReload();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <>
+        {msgCtx}
+        <Space.Compact style={{ width: "100%", maxWidth: 640 }}>
+          <Input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={t("state.codexDirPlaceholder")}
+            disabled={saving}
+            onPressEnter={() => void save()}
+            autoFocus
+          />
+          <Button
+            type="primary"
+            icon={<CheckOutlined />}
+            loading={saving}
+            onClick={() => void save()}
+            title={tCommon("save")}
+          />
+          <Button
+            icon={<CloseOutlined />}
+            disabled={saving}
+            onClick={() => {
+              setEditing(false);
+              setDraft(effective);
+              setError(null);
+            }}
+            title={tCommon("cancel")}
+          />
+        </Space.Compact>
+        <Typography.Paragraph
+          type="secondary"
+          style={{ fontSize: 11, marginTop: 6, marginBottom: 0 }}
+        >
+          {t("state.codexDirHelp")}
+        </Typography.Paragraph>
+        {error && (
+          <Typography.Text type="danger" style={{ fontSize: 11 }}>
+            {error}
+          </Typography.Text>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <>
+      {msgCtx}
+      <Space wrap>
+        <code>{effective}</code>
+        <Tag color={source === "user" ? "blue" : source === "env" ? "purple" : "default"}>
+          {sourceLabel}
+        </Tag>
+        <Button
+          size="small"
+          type="text"
+          icon={<EditOutlined />}
+          onClick={() => {
+            setDraft(effective);
+            setEditing(true);
+          }}
+        >
+          {t("state.codexDirEdit")}
+        </Button>
+        {source === "user" && (
+          <Button
+            size="small"
+            type="text"
+            icon={<ReloadOutlined />}
+            loading={saving}
+            onClick={() => void reset()}
+          >
+            {t("state.codexDirReset")}
+          </Button>
+        )}
+      </Space>
+    </>
   );
 }
 

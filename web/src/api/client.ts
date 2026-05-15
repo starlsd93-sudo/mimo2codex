@@ -317,7 +317,21 @@ export const api = {
     request<{ deleted: boolean }>("DELETE", "/active-override"),
   probeModel: (body: { providerId: string; modelId: string }) =>
     request<ProbeResult>("POST", "/probe-model", body),
+  codexDir: () => request<CodexDirInfo>("GET", "/codex-dir"),
+  setCodexDir: (dir: string) =>
+    request<CodexDirInfo>("PUT", "/codex-dir", { dir }),
+  clearCodexDir: () => request<CodexDirInfo>("DELETE", "/codex-dir"),
 };
+
+// /admin/api/codex-dir response. `source` tells the UI which layer of the
+// resolution chain produced `effective`, so it can show "default" / env /
+// user-set without recomputing on the client.
+export interface CodexDirInfo {
+  effective: string;
+  override: string | null;
+  envOverride?: string | null;
+  source: "user" | "env" | "default";
+}
 
 // Result of a /probe-model call. ok=false rows still come back as 200 from
 // the server (with the failure details in `error`) — only schema-level errors

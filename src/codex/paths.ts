@@ -1,11 +1,30 @@
 import os from "node:os";
 import path from "node:path";
+import { getSetting } from "../db/settings.js";
 
-// All Codex config lives under ~/.codex on every platform — on Windows
-// os.homedir() returns %USERPROFILE%, so this single helper handles both.
-// Kept as a function (not a top-level constant) so tests can stub
-// os.homedir() via vi.spyOn before importing the consumers.
+// Resolution order (highest priority first):
+//   1. settings.codex.dir — admin UI override, survives restarts
+//   2. CODEX_HOME env var  — matches the Codex CLI's own convention
+//   3. ~/.codex            — platform default (os.homedir() returns
+//                            %USERPROFILE% on Windows)
+//
+// Kept as a function (not a top-level constant) so:
+//   - tests can stub os.homedir() via vi.spyOn before importing consumers
+//   - the admin UI can change the override at runtime without restarting
 export function codexDir(): string {
+  try {
+    const override = getSetting("codex.dir");
+    if (override && override.trim()) {
+      return path.resolve(override.trim());
+    }
+  } catch {
+    // DB not opened — happens in tests that don't seed sqlite and during
+    // very early CLI bootstrap. Both cases legitimately want the default.
+  }
+  const envOverride = process.env.CODEX_HOME;
+  if (envOverride && envOverride.trim()) {
+    return path.resolve(envOverride.trim());
+  }
   return path.join(os.homedir(), ".codex");
 }
 

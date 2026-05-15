@@ -218,12 +218,18 @@ describe("admin REST — Codex 启用 routes", () => {
   // file-write side-effects (auth.json/config.toml + .bak.* files) land
   // inside the test sandbox.
   let homedirSpy: ReturnType<typeof vi.spyOn>;
+  let originalCodexHome: string | undefined;
 
   beforeEach(() => {
     homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(dataDir);
+    // codexDir() now consults CODEX_HOME before falling back to homedir; clear
+    // it for the test so the spied home wins.
+    originalCodexHome = process.env.CODEX_HOME;
+    delete process.env.CODEX_HOME;
   });
   afterEach(() => {
     homedirSpy.mockRestore();
+    if (originalCodexHome !== undefined) process.env.CODEX_HOME = originalCodexHome;
   });
 
   it("GET /admin/api/codex-state on a fresh machine returns 'missing'", async () => {

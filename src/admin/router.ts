@@ -24,6 +24,7 @@ import {
 import {
   deleteSetting,
   ForbiddenSettingError,
+  getSetting,
   isForbiddenSettingKey,
   listSettings,
   setSetting,
@@ -39,6 +40,7 @@ import {
   writeSpecsToFile,
 } from "../providers/genericLoader.js";
 import type { GenericProviderSpec } from "../providers/generic.js";
+import { isAbsolute as pathIsAbsolute } from "node:path";
 import { applyCodex, deleteBackupPair, readCodexState, restoreCodex } from "../codex/state.js";
 import {
   clearActiveOverride,
@@ -683,6 +685,72 @@ async function handleApi(ctx: RouteContext): Promise<void> {
     clearActiveOverride();
     log.info("active override cleared");
     return sendJson(res, 200, { deleted: true });
+  }
+
+  // codex-dir: get / set / clear the codex directory override. The override
+  // is stored in settings.codex.dir; codexDir() in src/codex/paths.ts reads
+  // it before falling back to CODEX_HOME env or ~/.codex. GET returns the
+  // currently-effective dir + the override source (so the UI can show
+  // "default" vs "env" vs "user-set"), PUT validates and writes, DELETE
+  // clears the override.
+  if (pathname === "/admin/api/codex-dir") {
+    if (req.method === "GET") {
+      const override = getSetting("codex.dir");
+      const envOverride = process.env.CODEX_HOME ?? null;
+      const source: "user" | "env" | "default" = override
+        ? "user"
+        : envOverride
+          ? "env"
+          : "default";
+      const effective = readCodexState().codexDir;
+      return sendJson(res, 200, { effective, override, envOverride, source });
+    }
+    if (req.method === "PUT") {
+      const body = await readJsonBody<{ dir?: unknown }>(req);
+      if (typeof body.dir !== "string" || !body.dir.trim()) {
+        return sendError(res, 400, "invalid_body", "dir must be a non-empty string");
+      }
+      const dir = body.dir.trim();
+      if (!pathIsAbsolute(dir)) {
+        return sendError(
+          res,
+          400,
+          "not_absolute",
+          `codex dir must be an absolute path; got ${dir}`
+        );
+      }
+      // Tolerate non-existent paths — the user may be configuring this before
+      // Codex is installed, or before mkdir-ing the dir themselves. Only
+      // reject if the path exists AND points at a non-directory (a file or
+      // device), which is unambiguously wrong.
+      if (existsSync(dir)) {
+        const stat = statSync(dir);
+        if (!stat.isDirectory()) {
+          return sendError(
+            res,
+            400,
+            "not_a_directory",
+            `${dir} exists but is not a directory`
+          );
+        }
+      }
+      setSetting("codex.dir", dir);
+      log.info(`codex dir override set: ${dir}`);
+      return sendJson(res, 200, { effective: dir, override: dir, source: "user" });
+    }
+    if (req.method === "DELETE") {
+      deleteSetting("codex.dir");
+      log.info("codex dir override cleared");
+      const envOverride = process.env.CODEX_HOME ?? null;
+      const effective = readCodexState().codexDir;
+      return sendJson(res, 200, {
+        effective,
+        override: null,
+        envOverride,
+        source: envOverride ? "env" : "default",
+      });
+    }
+    return sendError(res, 405, "method_not_allowed", "use GET / PUT / DELETE");
   }
 
   // probe-model: send a minimal chat / responses ping to the upstream so the

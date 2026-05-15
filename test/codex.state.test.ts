@@ -13,14 +13,18 @@ import { tmpdir } from "node:os";
 
 let fakeHome: string;
 let homedirSpy: ReturnType<typeof vi.spyOn>;
+let originalCodexHome: string | undefined;
 
 beforeEach(() => {
   fakeHome = mkdtempSync(path.join(tmpdir(), "m2c-codex-state-"));
   homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+  originalCodexHome = process.env.CODEX_HOME;
+  delete process.env.CODEX_HOME;
 });
 
 afterEach(() => {
   homedirSpy.mockRestore();
+  if (originalCodexHome !== undefined) process.env.CODEX_HOME = originalCodexHome;
   rmSync(fakeHome, { recursive: true, force: true });
 });
 

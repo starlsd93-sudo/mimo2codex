@@ -16,14 +16,20 @@ import { tmpdir } from "node:os";
 
 let fakeHome: string;
 let homedirSpy: ReturnType<typeof vi.spyOn>;
+let originalCodexHome: string | undefined;
 
 beforeEach(() => {
   fakeHome = mkdtempSync(path.join(tmpdir(), "m2c-codex-test-"));
   homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+  // codexDir() now consults CODEX_HOME before falling back to homedir, so a
+  // dev shell that exports CODEX_HOME would mask the mock. Snapshot + clear.
+  originalCodexHome = process.env.CODEX_HOME;
+  delete process.env.CODEX_HOME;
 });
 
 afterEach(() => {
   homedirSpy.mockRestore();
+  if (originalCodexHome !== undefined) process.env.CODEX_HOME = originalCodexHome;
   rmSync(fakeHome, { recursive: true, force: true });
 });
 
