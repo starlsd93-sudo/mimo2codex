@@ -333,3 +333,133 @@ describe("initRegistry / runtime registration", () => {
     expect(PROVIDERS.deepseek).toBeDefined();
   });
 });
+
+// minimax-compat: forceDefaultModel switches open-catalog generics into
+// "rewrite-to-defaultModel" mode (needed for MiniMax env-var single-instance
+// where Codex sends arbitrary model names like "gpt-5.5").
+describe("createGenericProvider — forceDefaultModel (minimax-compat)", () => {
+  it("forceDefaultModel: true makes open-catalog resolveModel return null", () => {
+    const p = createGenericProvider({
+      id: "minimax",
+      displayName: "MiniMax",
+      baseUrl: "https://api.minimaxi.com/v1",
+      envKey: "MINIMAX_API_KEY",
+      defaultModel: "MiniMax-M2.7",
+      forceDefaultModel: true,
+    });
+    expect(p.resolveModel("gpt-5.5")).toBeNull();
+    expect(p.resolveModel("anything-else")).toBeNull();
+    expect(p.resolveModel("MiniMax-M2.7")).toBeNull(); // still no declared catalog
+  });
+
+  it("forceDefaultModel: false (default) keeps open-catalog passthrough", () => {
+    const p = createGenericProvider({
+      id: "ollama",
+      displayName: "Ollama",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      envKey: "OLLAMA_API_KEY",
+      defaultModel: "qwen2.5-coder:7b",
+    });
+    expect(p.resolveModel("anything")?.id).toBe("anything");
+  });
+
+  it("forceDefaultModel does NOT affect strict-catalog providers", () => {
+    const p = createGenericProvider({
+      id: "minimax",
+      displayName: "MiniMax",
+      baseUrl: "https://api.minimaxi.com/v1",
+      envKey: "MINIMAX_API_KEY",
+      defaultModel: "MiniMax-M2.7",
+      models: [{ id: "MiniMax-M2.7" }],
+      forceDefaultModel: true, // still set but should be ignored when models[] is non-empty
+    });
+    expect(p.resolveModel("MiniMax-M2.7")?.id).toBe("MiniMax-M2.7");
+    expect(p.resolveModel("unknown")).toBeNull();
+  });
+});
+
+describe("loadGenericProviders — GENERIC_FORCE_DEFAULT_MODEL env var (minimax-compat)", () => {
+  it("GENERIC_FORCE_DEFAULT_MODEL=1 sets forceDefaultModel on env-var single-instance", () => {
+    const tmp2 = mkdtempSync(join(tmpdir(), "m2c-test-"));
+    try {
+      const result = loadGenericProviders(
+        {
+          GENERIC_BASE_URL: "https://api.minimaxi.com/v1",
+          GENERIC_DEFAULT_MODEL: "MiniMax-M2.7",
+          GENERIC_FORCE_DEFAULT_MODEL: "1",
+        },
+        tmp2,
+      );
+      expect(result).toHaveLength(1);
+      // resolveModel should now return null for any client model id
+      expect(result[0].resolveModel("gpt-5.5")).toBeNull();
+    } finally {
+      rmSync(tmp2, { recursive: true, force: true });
+    }
+  });
+
+  it("no GENERIC_FORCE_DEFAULT_MODEL → open-catalog passthrough preserved", () => {
+    const tmp2 = mkdtempSync(join(tmpdir(), "m2c-test-"));
+    try {
+      const result = loadGenericProviders(
+        {
+          GENERIC_BASE_URL: "http://127.0.0.1:11434/v1",
+          GENERIC_DEFAULT_MODEL: "qwen2.5-coder:7b",
+        },
+        tmp2,
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].resolveModel("qwen2.5-coder:7b")?.id).toBe("qwen2.5-coder:7b");
+      expect(result[0].resolveModel("anything")?.id).toBe("anything");
+    } finally {
+      rmSync(tmp2, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("loadGenericProviders — providers.json forceDefaultModel + features.minimaxCompat", () => {
+  it("forceDefaultModel and features are passed through from JSON", () => {
+    const tmp2 = mkdtempSync(join(tmpdir(), "m2c-test-"));
+    try {
+      writeFileSync(
+        join(tmp2, "providers.json"),
+        JSON.stringify({
+          providers: [
+            {
+              id: "minimax",
+              displayName: "MiniMax M2.7",
+              baseUrl: "https://api.minimaxi.com/v1",
+              envKey: "MINIMAX_API_KEY",
+              defaultModel: "MiniMax-M2.7",
+              forceDefaultModel: true,
+              features: { minimaxCompat: true, forceParallelToolCalls: true },
+            },
+          ],
+        }),
+      );
+      const result = loadGenericProviders({}, tmp2);
+      expect(result).toHaveLength(1);
+      const p = result[0];
+      expect(p.id).toBe("minimax");
+      expect(p.resolveModel("gpt-5.5")).toBeNull(); // forceDefaultModel respected
+
+      // preprocessResponses should now strip MiniMax-rejected fields end-to-end
+      const chat = p.preprocessResponses(
+        {
+          model: "MiniMax-M2.7",
+          instructions: "sys A",
+          stream: true,
+          tool_choice: "auto",
+          input: [{ type: "message", role: "user", content: "hi" }],
+        },
+        { runtime: { apiKey: "k", baseUrl: "u", flags: {} }, exposeReasoning: true },
+      );
+      expect("stream_options" in chat).toBe(false);
+      expect("tool_choice" in chat).toBe(false);
+      // forceParallelToolCalls true → reqToChat sets it; minimaxCompat preset then deletes it
+      expect("parallel_tool_calls" in chat).toBe(false);
+    } finally {
+      rmSync(tmp2, { recursive: true, force: true });
+    }
+  });
+});

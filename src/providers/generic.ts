@@ -1,5 +1,9 @@
 import type { ChatRequest, ResponsesRequest } from "../translate/types.js";
 import { reqToChat } from "../translate/reqToChat.js";
+import {
+  applyMinimaxCompat,
+  type MinimaxCompatFeatures,
+} from "../translate/minimaxCompat.js"; // minimax-compat: 后处理 sanitizer
 import type {
   PreprocessCtx,
   Provider,
@@ -26,8 +30,16 @@ export interface GenericProviderSpec {
   // (no rewrite to defaultModel). Provide entries here only when you want
   // print-config to fill in context_window / max_output_tokens.
   models?: ProviderModel[];
-  features?: { webSearch?: boolean; forceParallelToolCalls?: boolean };
+  features?: {
+    webSearch?: boolean;
+    forceParallelToolCalls?: boolean;
+  } & MinimaxCompatFeatures; // minimax-compat: 把 sanitizer 的子开关合并进 features 命名空间
   docsUrl?: string;
+  // minimax-compat: 当 models 为空且本 provider 是默认 provider 时，让 resolveModel
+  // 返回 null 以触发 selectProvider fallback 将 upstreamModel 改写为 defaultModel。
+  // 适用于 MiniMax 等用 env-var 单实例接入、客户端会发任意未知模型名（如 "gpt-5.5"）
+  // 的场景。默认 false → 保持既有"开放目录直通"（Ollama/OpenRouter 用法）不变。
+  forceDefaultModel?: boolean;
 }
 
 const RESERVED_IDS = new Set(["mimo", "deepseek"]);
@@ -95,6 +107,10 @@ export function createGenericProvider(spec: GenericProviderSpec): Provider {
 
     resolveModel(clientModel) {
       if (!hasDeclaredModels) {
+        // minimax-compat: forceDefaultModel 时返回 null，让 selectProvider 把
+        // upstreamModel 改写为本 provider 的 defaultModel（用于 MiniMax 等
+        // 需要把任意客户端模型名强制覆盖为单一上游模型的场景）。
+        if (spec.forceDefaultModel) return null;
         // Untyped passthrough — accept any model id and let the upstream
         // validate. This is the design choice that matches Codex's habit of
         // "whatever model = "..." is in config.toml gets sent verbatim".
@@ -118,14 +134,14 @@ export function createGenericProvider(spec: GenericProviderSpec): Provider {
       // future caller might).
       delete chat.thinking;
       delete chat.enable_thinking;
-      return chat;
+      return applyMinimaxCompat(chat, features); // minimax-compat: 关闭时是恒等
     },
 
     preprocessChat(req: ChatRequest, _ctx: PreprocessCtx): ChatRequest {
       const out = { ...req };
       delete out.thinking;
       delete out.enable_thinking;
-      return out;
+      return applyMinimaxCompat(out, features); // minimax-compat: 关闭时是恒等
     },
 
     preprocessResponsesPassthrough(req: ResponsesRequest, _ctx: PreprocessCtx): ResponsesRequest {

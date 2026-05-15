@@ -262,7 +262,9 @@ mimo2codex --model generic
 
 然后 `QWEN_API_KEY=sk-... mimo2codex --model qwen`。
 
-完整字段说明、`wireApi: "responses"` 直透模式、Qwen / GLM / Kimi / Ollama / OpenAI 五种主流上游的可粘贴示例、路由规则、故障排查，全部在 **[doc/generic-providers.zh.md](./doc/generic-providers.zh.md)**。
+完整字段说明、`wireApi: "responses"` 直透模式、Qwen / GLM / Kimi / Ollama / OpenAI / MiniMax 六种主流上游的可粘贴示例、路由规则、故障排查，全部在 **[doc/generic-providers.zh.md](./doc/generic-providers.zh.md)**。
+
+> 严格 OpenAI 兼容的上游（如 **MiniMax**）需要 `features.minimaxCompat: true` 一键开关——详见 [doc/minimax.zh.md](./doc/minimax.zh.md)。
 
 > 既有 mimo / deepseek 用户不写 `providers.json` 时**完全不受影响**——默认仍是 mimo，所有行为字节级一致。
 

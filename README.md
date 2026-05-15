@@ -263,7 +263,9 @@ mimo2codex --model generic
 
 Then `QWEN_API_KEY=sk-... mimo2codex --model qwen`.
 
-Full field reference, `wireApi: "responses"` passthrough mode, copy-pasteable examples for Qwen / GLM / Kimi / Ollama / OpenAI, routing rules and troubleshooting all live in **[doc/generic-providers.md](./doc/generic-providers.md)**.
+Full field reference, `wireApi: "responses"` passthrough mode, copy-pasteable examples for Qwen / GLM / Kimi / Ollama / OpenAI / MiniMax, routing rules and troubleshooting all live in **[doc/generic-providers.md](./doc/generic-providers.md)**.
+
+> Strict OpenAI-compatible upstreams (e.g. **MiniMax**) need a one-line `features.minimaxCompat: true` switch — see [doc/minimax.md](./doc/minimax.md).
 
 > Existing mimo / deepseek users with no `providers.json` **are not affected** — default provider stays `mimo` and behavior is byte-identical.
 
