@@ -1,20 +1,41 @@
 import { useEffect, useState } from "react";
+import {
+  Alert,
+  Card,
+  Form,
+  Input,
+  Segmented,
+  Space,
+  Table,
+  Tag,
+  Typography,
+  message,
+} from "antd";
+import type { ColumnsType } from "antd/es/table";
+import { useTranslation } from "react-i18next";
 import { api, type ProviderInfo } from "../api/client";
 import { KeyStatusBanner } from "../components/KeyStatusBanner";
+import {
+  useAppConfig,
+  type ThemeMode,
+} from "../contexts/AppConfigContext";
+import { SUPPORTED_LANGS, type SupportedLang } from "../i18n";
+
+const THEME_MODES: ThemeMode[] = ["dark", "light", "auto"];
 
 export function Settings() {
+  const { t } = useTranslation("settings");
+  const { themeMode, lang, refresh } = useAppConfig();
+  const [messageApi, contextHolder] = message.useMessage();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [settings, setSettings] = useState<Record<string, string>>({});
   const [dataDir, setDataDir] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
-  async function load() {
+  async function loadAll() {
     try {
       setError(null);
-      const [p, s, h] = await Promise.all([api.providers(), api.settings(), api.health()]);
+      const [p, h] = await Promise.all([api.providers(), api.health()]);
       setProviders(p.providers);
-      setSettings(s.settings);
       setDataDir(h.dataDir);
     } catch (err) {
       setError((err as Error).message);
@@ -22,146 +43,150 @@ export function Settings() {
   }
 
   useEffect(() => {
-    void load();
+    void loadAll();
   }, []);
 
   async function saveSetting(key: string, value: string) {
     try {
       setError(null);
-      setSuccess(null);
       await api.setSetting(key, value);
-      setSuccess(`已保存 ${key}`);
-      await load();
+      await refresh();
+      messageApi.success(t("ui.saved", { key }));
     } catch (err) {
       setError((err as Error).message);
     }
   }
 
+  const providerColumns: ColumnsType<ProviderInfo> = [
+    {
+      title: t("providers.columns.provider"),
+      dataIndex: "display_name",
+      key: "provider",
+      render: (name: string, row) => (
+        <Space>
+          <strong>{name}</strong>
+          {row.default && <Tag color="blue">{t("providers.tag.default")}</Tag>}
+        </Space>
+      ),
+    },
+    {
+      title: t("providers.columns.status"),
+      dataIndex: "api_key_present",
+      key: "status",
+      render: (present: boolean) =>
+        present ? (
+          <Tag color="success">{t("providers.tag.keyPresent")}</Tag>
+        ) : (
+          <Tag color="warning">{t("providers.tag.keyMissing")}</Tag>
+        ),
+    },
+    {
+      title: t("providers.columns.baseUrl"),
+      dataIndex: "base_url",
+      key: "base_url",
+      render: (v: string) => <code>{v}</code>,
+    },
+    {
+      title: t("providers.columns.defaultModel"),
+      dataIndex: "default_model",
+      key: "default_model",
+      render: (v: string) => <code>{v}</code>,
+    },
+    {
+      title: t("providers.columns.envVar"),
+      dataIndex: "api_key_env",
+      key: "env",
+      render: (env: string[]) => <code>{env.join(", ")}</code>,
+    },
+  ];
+
   return (
-    <div>
-      <h2>设置</h2>
+    <>
+      {contextHolder}
+      <Typography.Title level={2} style={{ marginTop: 0 }}>
+        {t("title")}
+      </Typography.Title>
 
       {error && (
-        <div className="banner err">
-          <span className="ic">!</span>
-          <div className="body">{error}</div>
-        </div>
-      )}
-      {success && (
-        <div className="banner ok">
-          <span className="ic">✓</span>
-          <div className="body">{success}</div>
-        </div>
+        <Alert
+          type="error"
+          showIcon
+          message={error}
+          closable
+          onClose={() => setError(null)}
+          style={{ marginBottom: 16 }}
+        />
       )}
 
-      <h3>API Key 状态</h3>
-      <KeyStatusBanner providers={providers} />
+      <Card title={t("ui.title")} style={{ marginBottom: 16 }}>
+        <Form layout="vertical">
+          <Form.Item label={t("ui.theme")}>
+            <Segmented<ThemeMode>
+              value={themeMode}
+              options={THEME_MODES.map((m) => ({
+                label: t(`ui.themeOption.${m}`),
+                value: m,
+              }))}
+              onChange={(v) => void saveSetting("ui.theme", v)}
+            />
+          </Form.Item>
+          <Form.Item label={t("ui.lang")}>
+            <Segmented<SupportedLang>
+              value={lang}
+              options={SUPPORTED_LANGS.map((l) => ({ label: l, value: l }))}
+              onChange={(v) => void saveSetting("ui.lang", v)}
+            />
+          </Form.Item>
+          <Alert type="info" showIcon message={t("ui.savedHint")} />
+        </Form>
+      </Card>
 
-      <div className="banner info" style={{ marginTop: 12 }}>
-        <span className="ic">i</span>
-        <div className="body">
-          <strong>API key 不在 UI 中存储，也不写入数据库。</strong>{" "}
-          这是为了避免凭据落盘后被备份/泄漏。
-          请通过环境变量注入 key 后重启 mimo2codex：
-          <ul style={{ margin: "8px 0 0 0", paddingLeft: 20 }}>
-            <li>
-              MiMo：<code>MIMO_API_KEY</code>
-            </li>
-            <li>
-              DeepSeek：<code>DS_API_KEY</code> 或 <code>DEEPSEEK_API_KEY</code>
-            </li>
-          </ul>
-          <div style={{ marginTop: 8 }}>
-            <code>export DS_API_KEY=sk-xxxxxx && mimo2codex --model ds</code>
-          </div>
-        </div>
-      </div>
+      <Card title={t("apiKey.title")} style={{ marginBottom: 16 }}>
+        <KeyStatusBanner providers={providers} />
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginTop: 12 }}
+          message={<strong>{t("apiKey.info")}</strong>}
+          description={
+            <>
+              <ul style={{ margin: "8px 0 0 0", paddingLeft: 20 }}>
+                <li>
+                  {t("apiKey.mimoLabel")}: <code>MIMO_API_KEY</code>
+                </li>
+                <li>
+                  {t("apiKey.dsLabel")}: <code>DS_API_KEY</code> /{" "}
+                  <code>DEEPSEEK_API_KEY</code>
+                </li>
+              </ul>
+              <div style={{ marginTop: 8 }}>
+                <code>export DS_API_KEY=sk-xxxxxx && mimo2codex --model ds</code>
+              </div>
+            </>
+          }
+        />
+      </Card>
 
-      <h3>Provider 配置</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>Provider</th>
-            <th>状态</th>
-            <th>Base URL</th>
-            <th>默认模型</th>
-            <th>Env 变量</th>
-          </tr>
-        </thead>
-        <tbody>
-          {providers.map((p) => (
-            <tr key={p.id}>
-              <td>
-                <strong>{p.display_name}</strong>{" "}
-                {p.default && <span className="tag ok">默认</span>}
-              </td>
-              <td>
-                {p.api_key_present ? (
-                  <span className="tag ok">已检测到 key</span>
-                ) : (
-                  <span className="tag warn">未检测到 key</span>
-                )}
-              </td>
-              <td className="mono">{p.base_url}</td>
-              <td className="mono">{p.default_model}</td>
-              <td className="mono">{p.api_key_env.join(", ")}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <Card title={t("providers.title")} style={{ marginBottom: 16 }}>
+        <Table<ProviderInfo>
+          rowKey="id"
+          dataSource={providers}
+          columns={providerColumns}
+          pagination={false}
+          size="middle"
+        />
+      </Card>
 
-      <h3>本地数据目录</h3>
-      <div className="field">
-        <label>当前 dataDir</label>
-        <input value={dataDir} disabled />
-      </div>
-      <p style={{ color: "var(--muted)", fontSize: 12, marginTop: 4 }}>
-        数据目录由启动参数决定（CLI <code>--data-dir</code> 或 env{" "}
-        <code>MIMO2CODEX_DATA_DIR</code>），UI 不可改写。默认为{" "}
-        <code>~/.mimo2codex/</code>。
-      </p>
-
-      <h3>UI 偏好</h3>
-      <SettingRow
-        keyName="ui.theme"
-        label="主题"
-        value={settings["ui.theme"] ?? "dark"}
-        onSave={saveSetting}
-      />
-      <SettingRow
-        keyName="ui.density"
-        label="密度"
-        value={settings["ui.density"] ?? "comfortable"}
-        onSave={saveSetting}
-      />
-    </div>
-  );
-}
-
-function SettingRow({
-  keyName,
-  label,
-  value,
-  onSave,
-}: {
-  keyName: string;
-  label: string;
-  value: string;
-  onSave: (key: string, value: string) => Promise<void>;
-}) {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    setV(value);
-  }, [value]);
-  return (
-    <div className="field">
-      <label>{label}</label>
-      <div className="row" style={{ margin: 0 }}>
-        <input className="grow" value={v} onChange={(e) => setV(e.target.value)} />
-        <button onClick={() => onSave(keyName, v)} disabled={v === value}>
-          保存
-        </button>
-      </div>
-    </div>
+      <Card title={t("dataDir.title")}>
+        <Form layout="vertical">
+          <Form.Item label={t("dataDir.currentLabel")}>
+            <Input value={dataDir} disabled />
+          </Form.Item>
+        </Form>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          {t("dataDir.hint")}
+        </Typography.Paragraph>
+      </Card>
+    </>
   );
 }

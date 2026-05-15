@@ -1,0 +1,46 @@
+{
+  "title": "Settings",
+  "ui": {
+    "title": "UI Preferences",
+    "theme": "Theme",
+    "themeOption": {
+      "dark": "Dark",
+      "light": "Light",
+      "auto": "Auto"
+    },
+    "lang": "Language",
+    "density": "Density",
+    "densityOption": {
+      "comfortable": "Comfortable",
+      "compact": "Compact"
+    },
+    "saved": "Saved {{key}}",
+    "savedHint": "Theme & language changes apply instantly across the whole UI — no reload needed."
+  },
+  "providers": {
+    "title": "Provider Configuration",
+    "columns": {
+      "provider": "Provider",
+      "status": "Status",
+      "baseUrl": "Base URL",
+      "defaultModel": "Default model",
+      "envVar": "Env variables"
+    },
+    "tag": {
+      "default": "Default",
+      "keyPresent": "key detected",
+      "keyMissing": "no key"
+    }
+  },
+  "apiKey": {
+    "title": "API Key Status",
+    "info": "API keys are never stored in the UI or written to the database — this avoids leaking credentials through backups. Inject keys via environment variables and restart mimo2codex:",
+    "mimoLabel": "MiMo",
+    "dsLabel": "DeepSeek"
+  },
+  "dataDir": {
+    "title": "Local Data Directory",
+    "currentLabel": "Current dataDir",
+    "hint": "The data directory is fixed at startup (CLI --data-dir or env MIMO2CODEX_DATA_DIR) and cannot be changed from the UI. Defaults to ~/.mimo2codex/."
+  }
+}

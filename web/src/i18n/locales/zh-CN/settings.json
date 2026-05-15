@@ -1,0 +1,46 @@
+{
+  "title": "设置",
+  "ui": {
+    "title": "UI 偏好",
+    "theme": "主题",
+    "themeOption": {
+      "dark": "深色",
+      "light": "浅色",
+      "auto": "跟随系统"
+    },
+    "lang": "语言",
+    "density": "密度",
+    "densityOption": {
+      "comfortable": "舒适",
+      "compact": "紧凑"
+    },
+    "saved": "已保存 {{key}}",
+    "savedHint": "切换主题或语言后无需刷新, 整站立即响应"
+  },
+  "providers": {
+    "title": "Provider 配置",
+    "columns": {
+      "provider": "Provider",
+      "status": "状态",
+      "baseUrl": "Base URL",
+      "defaultModel": "默认模型",
+      "envVar": "Env 变量"
+    },
+    "tag": {
+      "default": "默认",
+      "keyPresent": "已检测到 key",
+      "keyMissing": "未检测到 key"
+    }
+  },
+  "apiKey": {
+    "title": "API Key 状态",
+    "info": "API key 不在 UI 中存储, 也不写入数据库. 这是为了避免凭据落盘后被备份 / 泄漏. 请通过环境变量注入 key 后重启 mimo2codex:",
+    "mimoLabel": "MiMo",
+    "dsLabel": "DeepSeek"
+  },
+  "dataDir": {
+    "title": "本地数据目录",
+    "currentLabel": "当前 dataDir",
+    "hint": "数据目录由启动参数决定 (CLI --data-dir 或 env MIMO2CODEX_DATA_DIR), UI 不可改写. 默认为 ~/.mimo2codex/."
+  }
+}
