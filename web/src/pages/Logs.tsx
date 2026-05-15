@@ -13,6 +13,7 @@ import {
   Tooltip,
   Typography,
   message,
+  theme,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { ReloadOutlined, DeleteOutlined } from "@ant-design/icons";
@@ -247,9 +248,9 @@ export function Logs() {
       <Card>
         <Space style={{ marginBottom: 12, width: "100%", justifyContent: "space-between" }}>
           <Space>
-            <span style={{ color: "var(--muted)", fontSize: 13 }}>
+            <Typography.Text type="secondary">
               {t("filter.providerLabel")}
-            </span>
+            </Typography.Text>
             <Select
               value={provider}
               style={{ minWidth: 160 }}
@@ -323,6 +324,7 @@ function BodyBlock({
   body: string | null;
   t: ReturnType<typeof useTranslation<"logs">>["t"];
 }) {
+  const { token } = theme.useToken();
   if (!body) {
     return (
       <div>
@@ -358,7 +360,7 @@ function BodyBlock({
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
           margin: 0,
-          border: "1px solid var(--ant-color-border, #d9d9d9)",
+          border: `1px solid ${token.colorBorder}`,
           borderRadius: 4,
         }}
       >

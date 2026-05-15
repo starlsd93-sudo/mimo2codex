@@ -290,9 +290,7 @@ export function Dashboard() {
       <KeyStatusBanner providers={providers} />
 
       <Space style={{ marginTop: 16, marginBottom: 16 }}>
-        <span style={{ color: "var(--muted)", fontSize: 13 }}>
-          {t("range.label")}
-        </span>
+        <Typography.Text type="secondary">{t("range.label")}</Typography.Text>
         <Segmented<"24h" | "7d" | "30d">
           value={range}
           options={[
@@ -323,7 +321,9 @@ export function Dashboard() {
               title={t("card.errors.label")}
               value={totals.errors}
               groupSeparator=","
-              valueStyle={{ color: totals.errors > 0 ? "var(--ant-color-error)" : undefined }}
+              valueStyle={
+                totals.errors > 0 ? { color: "#f5222d" } : undefined
+              }
             />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {t("card.errors.sub", { rate: errorRate })}

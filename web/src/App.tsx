@@ -76,7 +76,10 @@ function ThemedRoot() {
   const antdLocale = lang === "en-US" ? enUS : zhCN;
 
   return (
-    <ConfigProvider theme={{ algorithm }} locale={antdLocale}>
+    <ConfigProvider
+      theme={{ algorithm, cssVar: true, hashed: false }}
+      locale={antdLocale}
+    >
       <BrowserRouter basename="/admin">
         <Shell />
       </BrowserRouter>
