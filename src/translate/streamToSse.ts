@@ -13,9 +13,16 @@ import {
   newResponseId,
 } from "../util/ids.js";
 import type { SseSink } from "../util/sse.js";
+import { createInlineThinkSplitter } from "./minimaxCompat.js"; // minimax-compat
 
 export interface StreamToSseOpts {
   exposeReasoning: boolean;
+  /**
+   * minimax-compat: 流式响应中把每个 delta.content 上的 inline `<think>...</think>`
+   * 切到 reasoning_content。跨 chunk 边界的半截标签会被 splitter 安全 carry，
+   * 不会泄漏。MiniMax / GLM-thinking 等 inline-thinking 上游必开。
+   */
+  extractInlineThink?: boolean;
 }
 
 interface ToolCallState {
@@ -52,11 +59,17 @@ class StreamState {
   usage: ResponsesUsage | null = null;
   exposeReasoning: boolean;
   req: ResponsesRequest;
+  // minimax-compat: 流式 <think>...</think> 切分器。null 时本路径关闭，
+  // delta.content 原样进 message 通道（既有行为）。
+  thinkSplitter: ReturnType<typeof createInlineThinkSplitter> | null = null;
 
-  constructor(req: ResponsesRequest, exposeReasoning: boolean) {
+  constructor(req: ResponsesRequest, opts: StreamToSseOpts) {
     this.req = req;
     this.model = req.model;
-    this.exposeReasoning = exposeReasoning;
+    this.exposeReasoning = opts.exposeReasoning;
+    if (opts.extractInlineThink) {
+      this.thinkSplitter = createInlineThinkSplitter();
+    }
   }
 
   nextSeq(): number {
@@ -324,7 +337,22 @@ function processChunk(sink: SseSink, state: StreamState, chunk: ChatStreamChunk)
   if (!choice) return;
   const delta = choice.delta;
 
-  if (delta.reasoning_content) {
+  // minimax-compat: 把 inline <think>...</think> 从 content 切到 reasoning_content。
+  // 这里就地构造一个本 chunk 的有效 delta（局部变量，不修改原 delta），让下面的
+  // reasoning_content / content 两个分支按平常逻辑跑即可。
+  let effContent = delta.content;
+  let effReasoningContent = delta.reasoning_content;
+  if (state.thinkSplitter && typeof delta.content === "string" && delta.content.length > 0) {
+    const split = state.thinkSplitter.processChunk(delta.content);
+    effContent = split.content || undefined;
+    if (split.reasoning) {
+      effReasoningContent = effReasoningContent
+        ? effReasoningContent + split.reasoning
+        : split.reasoning;
+    }
+  }
+
+  if (effReasoningContent) {
     // ALWAYS buffer reasoning_content — finalizeActive pins it into
     // `encrypted_content` so Codex echoes it back on the next turn,
     // which is what MiMo's "passing back reasoning_content" spec requires
@@ -332,25 +360,25 @@ function processChunk(sink: SseSink, state: StreamState, chunk: ChatStreamChunk)
     // (summary deltas) is gated by exposeReasoning — --no-reasoning hides
     // it from the terminal but does NOT break the round-trip.
     if (state.activeKind !== "reasoning") openReasoning(sink, state);
-    state.activeBuffer += delta.reasoning_content;
+    state.activeBuffer += effReasoningContent;
     if (state.exposeReasoning) {
       emit(sink, state, "response.reasoning_summary_text.delta", {
         item_id: state.activeItemId!,
         output_index: state.outputIndex - 1,
         summary_index: 0,
-        delta: delta.reasoning_content,
+        delta: effReasoningContent,
       });
     }
   }
 
-  if (delta.content) {
+  if (effContent) {
     if (state.activeKind !== "message") openMessage(sink, state);
-    state.activeBuffer += delta.content;
+    state.activeBuffer += effContent;
     emit(sink, state, "response.output_text.delta", {
       item_id: state.activeItemId!,
       output_index: state.outputIndex - 1,
       content_index: 0,
-      delta: delta.content,
+      delta: effContent,
     });
   }
 
@@ -411,13 +439,43 @@ export interface StreamPipelineResult {
   toolCallCount: number;
 }
 
+// minimax-compat: stream 结束时把 splitter 内残留的 carry 文本 flush 出去。
+// 半截 `<think>` 或 `</think>` 标签按字面文本处理（carry 不为空时一定是真的
+// 残留——见 createInlineThinkSplitter 的 flush 实现）。
+function flushThinkSplitter(sink: SseSink, state: StreamState): void {
+  if (!state.thinkSplitter) return;
+  const { content, reasoning } = state.thinkSplitter.flush();
+  if (reasoning) {
+    if (state.activeKind !== "reasoning") openReasoning(sink, state);
+    state.activeBuffer += reasoning;
+    if (state.exposeReasoning) {
+      emit(sink, state, "response.reasoning_summary_text.delta", {
+        item_id: state.activeItemId!,
+        output_index: state.outputIndex - 1,
+        summary_index: 0,
+        delta: reasoning,
+      });
+    }
+  }
+  if (content) {
+    if (state.activeKind !== "message") openMessage(sink, state);
+    state.activeBuffer += content;
+    emit(sink, state, "response.output_text.delta", {
+      item_id: state.activeItemId!,
+      output_index: state.outputIndex - 1,
+      content_index: 0,
+      delta: content,
+    });
+  }
+}
+
 export async function pipeChatStreamToResponses(
   sink: SseSink,
   source: StreamPipelineSource,
   req: ResponsesRequest,
   opts: StreamToSseOpts
 ): Promise<StreamPipelineResult> {
-  const state = new StreamState(req, opts.exposeReasoning);
+  const state = new StreamState(req, opts);
 
   emit(sink, state, "response.created", {
     response: buildResponseSnapshot(state, "in_progress"),
@@ -438,6 +496,7 @@ export async function pipeChatStreamToResponses(
       processChunk(sink, state, chunk);
     }
   } catch (err) {
+    flushThinkSplitter(sink, state);
     finalizeActive(sink, state);
     finalizeToolCalls(sink, state);
     const message = err instanceof Error ? err.message : String(err);
@@ -452,6 +511,7 @@ export async function pipeChatStreamToResponses(
     };
   }
 
+  flushThinkSplitter(sink, state);
   finalizeActive(sink, state);
   finalizeToolCalls(sink, state);
 

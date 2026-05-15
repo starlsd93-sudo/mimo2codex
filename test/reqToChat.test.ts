@@ -96,6 +96,93 @@ describe("reqToChat", () => {
     expect(chat.tool_choice).toEqual({ type: "function", function: { name: "shell" } });
   });
 
+  // issue #11 regression: 默认（未传 strict）/ 显式传 null 时，都不应该在
+  // outgoing function 上写 `strict: null` — MiMo 的 Pydantic schema 会以
+  // "Input should be a valid boolean" 400。
+  it("function tool without strict → outgoing tool omits strict field (issue #11)", () => {
+    const req: ResponsesRequest = {
+      model: "mimo-v2.5-pro",
+      input: [{ type: "message", role: "user", content: "go" }],
+      tools: [
+        {
+          type: "function",
+          name: "shell",
+          parameters: { type: "object" },
+        },
+      ],
+    };
+    const chat = reqToChat(req);
+    const fn = (chat.tools![0] as { function: Record<string, unknown> }).function;
+    expect("strict" in fn).toBe(false);
+  });
+
+  it("function tool with explicit strict: null → outgoing tool omits strict field (issue #11)", () => {
+    const req: ResponsesRequest = {
+      model: "mimo-v2.5-pro",
+      input: [{ type: "message", role: "user", content: "go" }],
+      tools: [
+        {
+          type: "function",
+          name: "shell",
+          parameters: { type: "object" },
+          strict: null,
+        } as unknown as ResponsesRequest["tools"][number],
+      ],
+    };
+    const chat = reqToChat(req);
+    const fn = (chat.tools![0] as { function: Record<string, unknown> }).function;
+    expect("strict" in fn).toBe(false);
+  });
+
+  it("function tool with explicit strict: false → outgoing tool preserves strict: false (issue #11)", () => {
+    // 显式 boolean 必须保留（用户明确意图）
+    const req: ResponsesRequest = {
+      model: "mimo-v2.5-pro",
+      input: [{ type: "message", role: "user", content: "go" }],
+      tools: [
+        {
+          type: "function",
+          name: "shell",
+          parameters: { type: "object" },
+          strict: false,
+        },
+      ],
+    };
+    const chat = reqToChat(req);
+    const fn = (chat.tools![0] as { function: { strict?: boolean } }).function;
+    expect(fn.strict).toBe(false);
+  });
+
+  it("local_shell builtin → outgoing shell function omits strict field (issue #11)", () => {
+    const req: ResponsesRequest = {
+      model: "mimo-v2.5-pro",
+      input: [{ type: "message", role: "user", content: "go" }],
+      tools: [{ type: "local_shell" }],
+    };
+    const chat = reqToChat(req);
+    const fn = (chat.tools![0] as { function: Record<string, unknown> }).function;
+    expect("strict" in fn).toBe(false);
+    expect(fn.name).toBe("shell");
+  });
+
+  it("custom tool → outgoing function omits strict field (issue #11)", () => {
+    const req: ResponsesRequest = {
+      model: "mimo-v2.5-pro",
+      input: [{ type: "message", role: "user", content: "go" }],
+      tools: [
+        {
+          type: "custom",
+          name: "grammar_tool",
+          description: "custom thing",
+          format: { type: "grammar" },
+        } as unknown as ResponsesRequest["tools"][number],
+      ],
+    };
+    const chat = reqToChat(req);
+    const fn = (chat.tools![0] as { function: Record<string, unknown> }).function;
+    expect("strict" in fn).toBe(false);
+  });
+
   it("function_call from history with output (round trip after tool exec)", () => {
     const req: ResponsesRequest = {
       model: "mimo-v2.5-pro",

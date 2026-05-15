@@ -78,4 +78,10 @@ export interface Provider {
   // with `model` substituted by the routing layer.
   preprocessResponsesPassthrough?(req: ResponsesRequest, ctx: PreprocessCtx): ResponsesRequest;
   enhanceError(ctx: { status: number; snippet?: string }): ProviderEnhancedError | null;
+  // minimax-compat: 响应翻译层用到的开关。未实现时所有标记 false → 既有行为。
+  // 目前只放 extractInlineThink（把 content 里的 <think>...</think> 切到 reasoning_content），
+  // 后续若再加响应侧 sanitizer 共用这一个对象，避免接口爆炸。
+  responseFlags?: {
+    extractInlineThink?: boolean;
+  };
 }

@@ -137,6 +137,53 @@ describe("respToResponses", () => {
     expect(r.output[2].id).toMatch(/^fc_/);
   });
 
+  // minimax-compat: response-side <think>...</think> extraction. Defaults to
+  // off — only takes effect when the provider sets extractInlineThink: true.
+  it("extractInlineThink: false (default) preserves <think> verbatim in content", () => {
+    const r = respToResponses(
+      makeChat({ content: "<think>secret reasoning</think>visible answer" }),
+      baseReq,
+      { exposeReasoning: true },
+    );
+    expect(r.output).toHaveLength(1); // no reasoning item
+    const msg = r.output[0] as { content: Array<{ text: string }> };
+    expect(msg.content[0].text).toBe("<think>secret reasoning</think>visible answer");
+  });
+
+  it("extractInlineThink: true splits <think>...</think> into a reasoning item", () => {
+    const r = respToResponses(
+      makeChat({ content: "<think>secret reasoning</think>visible answer" }),
+      baseReq,
+      { exposeReasoning: true, extractInlineThink: true },
+    );
+    expect(r.output).toHaveLength(2);
+    expect(r.output[0].type).toBe("reasoning");
+    const reason = r.output[0] as {
+      summary: Array<{ text: string }>;
+      encrypted_content: string | null;
+    };
+    expect(reason.summary[0].text).toBe("secret reasoning");
+    expect(reason.encrypted_content).toBe("secret reasoning");
+    expect(r.output[1].type).toBe("message");
+    const msg = r.output[1] as { content: Array<{ text: string }> };
+    expect(msg.content[0].text).toBe("visible answer");
+  });
+
+  it("extractInlineThink: true appends to existing reasoning_content (not overwrites)", () => {
+    const chat = makeChat({
+      content: "<think>inline part</think>answer",
+      reasoning: "from separate field",
+    });
+    const r = respToResponses(chat, baseReq, {
+      exposeReasoning: true,
+      extractInlineThink: true,
+    });
+    const reason = r.output.find((o) => o.type === "reasoning") as
+      | { encrypted_content: string }
+      | undefined;
+    expect(reason!.encrypted_content).toBe("from separate field\n\ninline part");
+  });
+
   it("forwards web_search annotations (url_citation) onto the output_text content part", () => {
     const chat: ChatResponse = {
       id: "x",

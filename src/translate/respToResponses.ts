@@ -11,9 +11,16 @@ import {
   newReasoningId,
   newResponseId,
 } from "../util/ids.js";
+import { applyInlineThinkSplitToMessage } from "./minimaxCompat.js"; // minimax-compat
 
 export interface RespToResponsesOpts {
   exposeReasoning: boolean;
+  /**
+   * minimax-compat: 在生成 Responses 输出之前，先把 `message.content` 里的 inline
+   * `<think>...</think>` 块切到 `message.reasoning_content`。MiniMax M1/M2/M3 等
+   * inline-thinking 上游必开；否则 thinking 文本会泄漏给 Codex 当作 assistant 文本显示。
+   */
+  extractInlineThink?: boolean;
 }
 
 function mapUsage(u: ChatResponse["usage"]): ResponsesUsage | null {
@@ -42,6 +49,15 @@ export function respToResponses(
   const choice = chat.choices[0];
   const message = choice?.message;
   const output: ResponsesOutputItem[] = [];
+
+  // minimax-compat: 先把 <think>...</think> 从 message.content 切到 reasoning_content，
+  // 后续 reasoning_content 分支就能自然吃到。message 是 ChatChoiceMessage 即外部
+  // ChatResponse 的子结构，原地改写不影响其他字段。
+  if (opts.extractInlineThink && message) {
+    applyInlineThinkSplitToMessage(
+      message as unknown as { content?: string | unknown; reasoning_content?: string | null },
+    );
+  }
 
   if (message?.reasoning_content) {
     // Always pin the FULL reasoning text in `encrypted_content` — Codex

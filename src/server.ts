@@ -426,6 +426,10 @@ async function handleResponses(
       const chatJson = (await upstreamRes.json()) as ChatResponse;
       const responses = respToResponses(chatJson, payload, {
         exposeReasoning: cfg.exposeReasoning,
+        // minimax-compat: 把 inline <think>...</think> 切到 reasoning_content。
+        // 仅当 provider 声明开了（generic provider 的 features.minimaxCompat 或
+        // features.extractThinkTags），其他 provider 这里是 undefined → 既有行为。
+        extractInlineThink: !!provider.responseFlags?.extractInlineThink,
       });
       sendJson(res, 200, responses);
       recordLog(cfg, {
@@ -537,7 +541,11 @@ async function handleResponses(
       sink,
       { chunks },
       payload,
-      { exposeReasoning: cfg.exposeReasoning }
+      {
+        exposeReasoning: cfg.exposeReasoning,
+        // minimax-compat: 同 respToResponses 调用点，对 inline-think 上游开启切分。
+        extractInlineThink: !!provider.responseFlags?.extractInlineThink,
+      }
     );
   } catch (err) {
     streamError = err as Error;

@@ -129,9 +129,39 @@ function parseSpec(raw: unknown, idx: number): GenericProviderSpec {
             typeof features.forceParallelToolCalls === "boolean"
               ? features.forceParallelToolCalls
               : undefined,
+          // minimax-compat: 透传 MinimaxCompatFeatures 的 6 个开关
+          minimaxCompat:
+            typeof features.minimaxCompat === "boolean" ? features.minimaxCompat : undefined,
+          dropNullStrict:
+            typeof features.dropNullStrict === "boolean" ? features.dropNullStrict : undefined,
+          dropNullContent:
+            typeof features.dropNullContent === "boolean" ? features.dropNullContent : undefined,
+          dropToolChoiceAuto:
+            typeof features.dropToolChoiceAuto === "boolean"
+              ? features.dropToolChoiceAuto
+              : undefined,
+          dropStreamOptions:
+            typeof features.dropStreamOptions === "boolean"
+              ? features.dropStreamOptions
+              : undefined,
+          dropParallelToolCalls:
+            typeof features.dropParallelToolCalls === "boolean"
+              ? features.dropParallelToolCalls
+              : undefined,
+          mergeSystemMessages:
+            typeof features.mergeSystemMessages === "boolean"
+              ? features.mergeSystemMessages
+              : undefined,
+          extractThinkTags:
+            typeof features.extractThinkTags === "boolean"
+              ? features.extractThinkTags
+              : undefined,
         }
       : undefined,
     docsUrl: typeof obj.docsUrl === "string" ? obj.docsUrl : undefined,
+    // minimax-compat: 顶层 forceDefaultModel 字段
+    forceDefaultModel:
+      typeof obj.forceDefaultModel === "boolean" ? obj.forceDefaultModel : undefined,
   };
 }
 
@@ -231,6 +261,10 @@ function loadFromEnv(env: NodeJS.ProcessEnv): GenericProviderSpec[] {
           ? (env.GENERIC_WIRE_API as "responses" | "chat")
           : undefined,
       models: [],
+      // minimax-compat: env-var 单实例下接 MiniMax 类严格上游时必开。
+      // 默认 false → 不影响 Ollama / OpenRouter 等开放目录直通用法。
+      forceDefaultModel:
+        env.GENERIC_FORCE_DEFAULT_MODEL === "1" || env.GENERIC_FORCE_DEFAULT_MODEL === "true",
     },
   ];
 }

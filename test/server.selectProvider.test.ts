@@ -213,3 +213,53 @@ describe("selectProvider runtime override (Pass 0)", () => {
     expect(sel.rewriteNotice).toBeNull();
   });
 });
+
+// minimax-compat: forceDefaultModel routing — verifies the env-var single-instance
+// MiniMax flow where Codex sends an arbitrary model name like "gpt-5.5" and it
+// must be rewritten to the provider's defaultModel rather than forwarded verbatim.
+describe("selectProvider — forceDefaultModel fallback (minimax-compat)", () => {
+  it("case L: forceDefaultModel generic as default rewrites unknown ids to defaultModel", () => {
+    initRegistry([
+      createGenericProvider({
+        id: "minimax",
+        displayName: "MiniMax M2.7",
+        baseUrl: "https://api.minimaxi.com/v1",
+        envKey: "MINIMAX_API_KEY",
+        defaultModel: "MiniMax-M2.7",
+        forceDefaultModel: true,
+      }),
+    ]);
+    const cfg = makeConfig({
+      defaultProviderId: "minimax",
+      providers: { mimo: null, deepseek: null, minimax: fakeRuntime },
+    });
+    const sel = selectProvider("gpt-5.5", cfg);
+    expect(sel.provider.id).toBe("minimax");
+    expect(sel.upstreamModel).toBe("MiniMax-M2.7");
+    expect(sel.rewriteNotice).not.toBeNull();
+    expect(sel.rewriteNotice?.from).toBe("gpt-5.5");
+    expect(sel.rewriteNotice?.to).toBe("MiniMax-M2.7");
+  });
+
+  it("case M: open-catalog generic without forceDefaultModel preserves passthrough", () => {
+    initRegistry([
+      createGenericProvider({
+        id: "ollama",
+        displayName: "Ollama",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        envKey: "OLLAMA_API_KEY",
+        defaultModel: "qwen2.5-coder:7b",
+        // forceDefaultModel intentionally not set → open-catalog passthrough
+      }),
+    ]);
+    const cfg = makeConfig({
+      defaultProviderId: "ollama",
+      providers: { mimo: null, deepseek: null, ollama: fakeRuntime },
+    });
+    const sel = selectProvider("custom:tag", cfg);
+    expect(sel.provider.id).toBe("ollama");
+    // Forwarded verbatim, no rewrite
+    expect(sel.upstreamModel).toBe("custom:tag");
+    expect(sel.rewriteNotice).toBeNull();
+  });
+});

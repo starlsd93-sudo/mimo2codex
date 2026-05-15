@@ -228,7 +228,9 @@ const LOCAL_SHELL_FN: ChatTool = {
       },
       required: ["command"],
     },
-    strict: null,
+    // strict 故意省略：MiMo 后端使用 Pydantic 严格校验，会拒绝
+    // `strict: null`（报错 `Input should be a valid boolean`）。OpenAI 规范里
+    // strict 本就是 optional，省略与不严格 schema 行为等价。见 issue #11。
   },
 };
 
@@ -284,15 +286,18 @@ function toolToChat(t: ResponsesTool, opts: ReqToChatOpts): ChatTool | ChatTool[
       log.debug("dropping function tool with no name");
       return null;
     }
-    return {
-      type: "function",
-      function: {
-        name: ft.name,
-        description: ft.description,
-        parameters: ft.parameters,
-        strict: ft.strict ?? null,
-      },
+    // issue #11: 只在 strict 是显式 boolean 时才写入字段。Codex Desktop 经常会
+    // 发 `strict: null`（或不传 strict）；之前的 `ft.strict ?? null` 把这两种
+    // 情况都序列化为 `strict: null` 发给上游，而 MiMo 的 Pydantic schema 拒绝
+    // null → 400 "Input should be a valid boolean"。省略字段对齐 OpenAI 规范
+    // （strict 是 optional），同时兼容所有严格 OpenAI 兼容上游。
+    const fn: { name: string; description?: string; parameters?: Record<string, unknown>; strict?: boolean } = {
+      name: ft.name,
+      description: ft.description,
+      parameters: ft.parameters,
     };
+    if (typeof ft.strict === "boolean") fn.strict = ft.strict;
+    return { type: "function", function: fn };
   }
 
   // 2. Codex's `local_shell` builtin → emit as a regular `shell` function tool
@@ -359,7 +364,7 @@ function toolToChat(t: ResponsesTool, opts: ReqToChatOpts): ChatTool | ChatTool[
           },
           additionalProperties: true,
         },
-        strict: null,
+        // strict 故意省略，见 issue #11 / 上方 function 工具透传分支注释。
       },
     };
   }
