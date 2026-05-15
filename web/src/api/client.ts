@@ -82,8 +82,23 @@ export interface GenericProviderSpec {
   defaultModel: string;
   wireApi?: "chat" | "responses";
   models?: GenericProviderModelSpec[];
-  features?: { webSearch?: boolean; forceParallelToolCalls?: boolean };
+  features?: {
+    webSearch?: boolean;
+    forceParallelToolCalls?: boolean;
+    // minimax-compat: 严格 OpenAI 兼容子开关。命名以 MiniMax 首位受益者命名，
+    // 但任何严格的 OpenAI-compat 上游（国产模型网关等）都能复用。
+    minimaxCompat?: boolean;
+    dropNullStrict?: boolean;
+    dropNullContent?: boolean;
+    dropToolChoiceAuto?: boolean;
+    dropStreamOptions?: boolean;
+    dropParallelToolCalls?: boolean;
+    mergeSystemMessages?: boolean;
+  };
   docsUrl?: string;
+  // minimax-compat: 顶层开关。models: [] 时让 resolveModel 返回 null，
+  // 未知客户端模型名（如 "gpt-5.5"）会被改写到本 provider 的 defaultModel。
+  forceDefaultModel?: boolean;
 }
 
 export interface GenericProvidersResponse {

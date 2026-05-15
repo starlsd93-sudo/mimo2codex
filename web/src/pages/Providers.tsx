@@ -39,6 +39,16 @@ interface FormValues extends GenericProviderSpec {
   wireApiDisplay: "chat" | "responses";
   forceParallelToolCalls: boolean;
   featWebSearch: boolean;
+  // minimax-compat: 把 features 里的严格兼容子开关平铺到表单顶层，方便 antd Form 绑定。
+  featMinimaxCompat: boolean;
+  featDropNullStrict: boolean;
+  featDropNullContent: boolean;
+  featDropToolChoiceAuto: boolean;
+  featDropStreamOptions: boolean;
+  featDropParallelToolCalls: boolean;
+  featMergeSystemMessages: boolean;
+  // minimax-compat: 顶层 forceDefaultModel 是非 features 字段，单独平铺也是为了表单绑定方便。
+  featForceDefaultModel: boolean;
 }
 
 function emptyFormValues(): FormValues {
@@ -55,6 +65,14 @@ function emptyFormValues(): FormValues {
     features: { forceParallelToolCalls: false, webSearch: false },
     forceParallelToolCalls: false,
     featWebSearch: false,
+    featMinimaxCompat: false,
+    featDropNullStrict: false,
+    featDropNullContent: false,
+    featDropToolChoiceAuto: false,
+    featDropStreamOptions: false,
+    featDropParallelToolCalls: false,
+    featMergeSystemMessages: false,
+    featForceDefaultModel: false,
     docsUrl: "",
   };
 }
@@ -71,9 +89,25 @@ function specToFormValues(spec: GenericProviderSpec): FormValues {
     features: {
       forceParallelToolCalls: !!spec.features?.forceParallelToolCalls,
       webSearch: !!spec.features?.webSearch,
+      // 平铺 minimax-compat 子开关
+      minimaxCompat: !!spec.features?.minimaxCompat,
+      dropNullStrict: !!spec.features?.dropNullStrict,
+      dropNullContent: !!spec.features?.dropNullContent,
+      dropToolChoiceAuto: !!spec.features?.dropToolChoiceAuto,
+      dropStreamOptions: !!spec.features?.dropStreamOptions,
+      dropParallelToolCalls: !!spec.features?.dropParallelToolCalls,
+      mergeSystemMessages: !!spec.features?.mergeSystemMessages,
     },
     forceParallelToolCalls: !!spec.features?.forceParallelToolCalls,
     featWebSearch: !!spec.features?.webSearch,
+    featMinimaxCompat: !!spec.features?.minimaxCompat,
+    featDropNullStrict: !!spec.features?.dropNullStrict,
+    featDropNullContent: !!spec.features?.dropNullContent,
+    featDropToolChoiceAuto: !!spec.features?.dropToolChoiceAuto,
+    featDropStreamOptions: !!spec.features?.dropStreamOptions,
+    featDropParallelToolCalls: !!spec.features?.dropParallelToolCalls,
+    featMergeSystemMessages: !!spec.features?.mergeSystemMessages,
+    featForceDefaultModel: !!spec.forceDefaultModel,
     docsUrl: spec.docsUrl ?? "",
   };
 }
@@ -95,7 +129,18 @@ function formValuesToSpec(form: FormValues): GenericProviderSpec {
   const features: Record<string, boolean> = {};
   if (form.forceParallelToolCalls) features.forceParallelToolCalls = true;
   if (form.featWebSearch) features.webSearch = true;
+  // minimax-compat: 6 个子开关 + 1 个一键预设。开关默认 false → 写入时只在 true 时落盘
+  // 以保持 providers.json 清爽，与既有 forceParallelToolCalls / webSearch 处理一致。
+  if (form.featMinimaxCompat) features.minimaxCompat = true;
+  if (form.featDropNullStrict) features.dropNullStrict = true;
+  if (form.featDropNullContent) features.dropNullContent = true;
+  if (form.featDropToolChoiceAuto) features.dropToolChoiceAuto = true;
+  if (form.featDropStreamOptions) features.dropStreamOptions = true;
+  if (form.featDropParallelToolCalls) features.dropParallelToolCalls = true;
+  if (form.featMergeSystemMessages) features.mergeSystemMessages = true;
   if (Object.keys(features).length > 0) out.features = features;
+  // minimax-compat: 顶层 forceDefaultModel
+  if (form.featForceDefaultModel) out.forceDefaultModel = true;
   if (form.docsUrl?.trim()) out.docsUrl = form.docsUrl.trim();
   return out;
 }
@@ -585,6 +630,84 @@ function ProviderFormModal({
                 <strong>{t("form.fields.webSearch")}</strong>{" "}
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   · {t("form.fields.webSearchSub")}
+                </Typography.Text>
+              </Checkbox>
+            </Form.Item>
+          </Space>
+        </Form.Item>
+
+        {/* minimax-compat: 严格 OpenAI 兼容预设。命名以 MiniMax 首位受益者命名，
+            但任何拒绝 strict:null / content:null / stream_options 等字段的上游都能用。 */}
+        <Form.Item label={t("form.fields.strictCompat")}>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
+            {t("form.fields.strictCompatHint")}
+          </Typography.Paragraph>
+          <Space direction="vertical">
+            <Form.Item name="featMinimaxCompat" valuePropName="checked" noStyle>
+              <Checkbox>
+                <strong>{t("form.fields.minimaxCompat")}</strong>{" "}
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  · {t("form.fields.minimaxCompatSub")}
+                </Typography.Text>
+              </Checkbox>
+            </Form.Item>
+            <Form.Item name="featForceDefaultModel" valuePropName="checked" noStyle>
+              <Checkbox>
+                <strong>{t("form.fields.forceDefaultModel")}</strong>{" "}
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  · {t("form.fields.forceDefaultModelSub")}
+                </Typography.Text>
+              </Checkbox>
+            </Form.Item>
+
+            <Typography.Text type="secondary" style={{ fontSize: 11, marginTop: 4 }}>
+              {t("form.fields.strictCompatSubswitches")}
+            </Typography.Text>
+            <Form.Item name="featDropNullStrict" valuePropName="checked" noStyle>
+              <Checkbox>
+                <code>dropNullStrict</code>{" "}
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  · {t("form.fields.dropNullStrictSub")}
+                </Typography.Text>
+              </Checkbox>
+            </Form.Item>
+            <Form.Item name="featDropNullContent" valuePropName="checked" noStyle>
+              <Checkbox>
+                <code>dropNullContent</code>{" "}
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  · {t("form.fields.dropNullContentSub")}
+                </Typography.Text>
+              </Checkbox>
+            </Form.Item>
+            <Form.Item name="featDropToolChoiceAuto" valuePropName="checked" noStyle>
+              <Checkbox>
+                <code>dropToolChoiceAuto</code>{" "}
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  · {t("form.fields.dropToolChoiceAutoSub")}
+                </Typography.Text>
+              </Checkbox>
+            </Form.Item>
+            <Form.Item name="featDropStreamOptions" valuePropName="checked" noStyle>
+              <Checkbox>
+                <code>dropStreamOptions</code>{" "}
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  · {t("form.fields.dropStreamOptionsSub")}
+                </Typography.Text>
+              </Checkbox>
+            </Form.Item>
+            <Form.Item name="featDropParallelToolCalls" valuePropName="checked" noStyle>
+              <Checkbox>
+                <code>dropParallelToolCalls</code>{" "}
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  · {t("form.fields.dropParallelToolCallsSub")}
+                </Typography.Text>
+              </Checkbox>
+            </Form.Item>
+            <Form.Item name="featMergeSystemMessages" valuePropName="checked" noStyle>
+              <Checkbox>
+                <code>mergeSystemMessages</code>{" "}
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  · {t("form.fields.mergeSystemMessagesSub")}
                 </Typography.Text>
               </Checkbox>
             </Form.Item>
