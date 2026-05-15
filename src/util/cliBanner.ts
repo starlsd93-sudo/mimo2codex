@@ -11,19 +11,19 @@
 // Both helpers degrade to plain text when stdout isn't a TTY (and FORCE_COLOR
 // isn't set), so scripted captures stay clean.
 
-const ANSI = {
-  reset: "\x1b[0m",
-  dim: "\x1b[2m",
-};
+import { detectColorLevel, fg, RESET, DIM } from "./cliColor.js";
 
-const BORDER_COLOR = "\x1b[38;2;120;144;156m"; // muted slate, doesn't compete
-const CODE_COLOR = "\x1b[38;2;255;214;10m"; //   #FFD60A — striking yellow
+// Encoded lazily per call so we pick the right escape format (truecolor vs
+// 256-color cube) on every render. Light overhead, avoids stale state if
+// the env / TTY status changes between calls.
+function borderCode(): string {
+  // #7890 9C — muted slate, doesn't compete with the box contents.
+  return fg(0x78, 0x90, 0x9c, detectColorLevel());
+}
 
-function colorEnabled(): boolean {
-  if (process.env.NO_COLOR) return false;
-  if (process.env.FORCE_COLOR === "0") return false;
-  if (process.env.FORCE_COLOR) return true;
-  return !!process.stdout.isTTY;
+function codeCode(): string {
+  // #FFD60A — striking yellow; pairs with the deep-ocean logo gradient.
+  return fg(0xff, 0xd6, 0x0a, detectColorLevel());
 }
 
 // Display-width of a string. Banner content is ASCII + box-drawing chars + a
@@ -37,11 +37,12 @@ function visibleWidth(s: string): number {
 }
 
 export function printBoxedBanner(lines: string[]): void {
-  const color = colorEnabled();
+  const level = detectColorLevel();
   const innerWidth = Math.max(...lines.map(visibleWidth));
   const horiz = "─".repeat(innerWidth + 2);
-  const wrap = (border: string): string =>
-    color ? `${BORDER_COLOR}${border}${ANSI.reset}` : border;
+  const border = borderCode();
+  const wrap = (chunk: string): string =>
+    level > 0 ? `${border}${chunk}${RESET}` : chunk;
   process.stdout.write(wrap(`╭${horiz}╮`) + "\n");
   for (const line of lines) {
     const pad = " ".repeat(innerWidth - visibleWidth(line));
@@ -51,7 +52,9 @@ export function printBoxedBanner(lines: string[]): void {
 }
 
 export function colorizeSnippet(text: string): string {
-  if (!colorEnabled()) return text;
+  const level = detectColorLevel();
+  if (level === 0) return text;
+  const code = codeCode();
   return text
     .split("\n")
     .map((line) => {
@@ -61,9 +64,9 @@ export function colorizeSnippet(text: string): string {
       // `#` lines as section headers ("# Step 1 — write …"). Dim those so
       // the eye locks onto the code rows.
       if (trimmed.startsWith("#")) {
-        return `${ANSI.dim}${line}${ANSI.reset}`;
+        return `${DIM}${line}${RESET}`;
       }
-      return `${CODE_COLOR}${line}${ANSI.reset}`;
+      return `${code}${line}${RESET}`;
     })
     .join("\n");
 }

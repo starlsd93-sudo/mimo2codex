@@ -18,11 +18,7 @@ const REPO_URL = "https://github.com/7as0nch/mimo2codex";
 const ISSUES_URL = `${REPO_URL}/issues`;
 const TAGLINE = "Local proxy · Codex Responses API ↔ Chat Completions (MiMo / DeepSeek / generic)";
 
-const ANSI = {
-  reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  dim: "\x1b[2m",
-};
+import { detectColorLevel, fg, RESET, BOLD, DIM, type ColorLevel } from "./cliColor.js";
 
 // Three-stop horizontal gradient. "Deep ocean" — bright surface cyan
 // fading through a mid-blue into near-black abyssal blue. Conveys depth
@@ -53,23 +49,13 @@ function gradientAt(t: number): { r: number; g: number; b: number } {
   };
 }
 
-function colorEnabled(): boolean {
-  // Respect the de-facto NO_COLOR / FORCE_COLOR conventions before falling
-  // back to TTY detection. FORCE_COLOR=0 explicitly disables; any other
-  // truthy value enables (useful in CI that's pretending to be a TTY).
-  if (process.env.NO_COLOR) return false;
-  if (process.env.FORCE_COLOR === "0") return false;
-  if (process.env.FORCE_COLOR) return true;
-  return !!process.stdout.isTTY;
-}
-
-// Paint one line of the logo with the column-indexed truecolor gradient.
-// Spaces aren't colored (saves escape codes; spaces don't render color
-// anyway). Emits one SGR per character but coalesces consecutive identical
-// colors — for an 83-col line this means roughly one escape per cell, which
-// is fine; xterm-class terminals handle this trivially.
-function colorLine(line: string, totalCols: number, color: boolean): string {
-  if (!color) return line;
+// Paint one line of the logo with the column-indexed gradient. Spaces are
+// skipped (they carry no foreground color). Repeated identical SGRs are
+// coalesced. The encoder picks truecolor or 256-color cube based on
+// terminal capability — critical on Apple Terminal.app which silently
+// mis-parses truecolor escapes into the legacy palette.
+function colorLine(line: string, totalCols: number, level: ColorLevel): string {
+  if (level === 0) return line;
   const chars = [...line];
   let out = "";
   let lastCode = "";
@@ -81,14 +67,14 @@ function colorLine(line: string, totalCols: number, color: boolean): string {
     }
     const t = totalCols > 1 ? i / (totalCols - 1) : 0;
     const { r, g, b } = gradientAt(t);
-    const code = `\x1b[38;2;${r};${g};${b}m`;
+    const code = fg(r, g, b, level);
     if (code !== lastCode) {
       out += code;
       lastCode = code;
     }
     out += ch;
   }
-  return out + ANSI.reset;
+  return out + RESET;
 }
 
 export function printLogo(version: string): void {
@@ -97,22 +83,22 @@ export function printLogo(version: string): void {
   // (FORCE_COLOR is the conventional "I want decoration even in pipes"
   // escape hatch).
   if (!process.stdout.isTTY && !process.env.FORCE_COLOR) return;
-  const color = colorEnabled();
+  const level = detectColorLevel();
   const wrap = (code: string, text: string): string =>
-    color ? `${code}${text}${ANSI.reset}` : text;
+    level > 0 ? `${code}${text}${RESET}` : text;
 
   const totalCols = Math.max(...LOGO_LINES.map((l) => [...l].length));
   for (const line of LOGO_LINES) {
-    process.stdout.write(colorLine(line, totalCols, color) + "\n");
+    process.stdout.write(colorLine(line, totalCols, level) + "\n");
   }
   process.stdout.write("\n");
   // Tagline + GitHub: dim styling so it visually sits "under" the logo
   // without competing with the operational banner that follows.
   process.stdout.write(
-    "  " + wrap(ANSI.bold, `v${version}`) + wrap(ANSI.dim, `  ·  ${TAGLINE}`) + "\n"
+    "  " + wrap(BOLD, `v${version}`) + wrap(DIM, `  ·  ${TAGLINE}`) + "\n"
   );
   process.stdout.write(
-    "  " + wrap(ANSI.dim, "GitHub: ") + REPO_URL + wrap(ANSI.dim, "   ·   Issues: ") + ISSUES_URL + "\n"
+    "  " + wrap(DIM, "GitHub: ") + REPO_URL + wrap(DIM, "   ·   Issues: ") + ISSUES_URL + "\n"
   );
   process.stdout.write("\n");
 }
