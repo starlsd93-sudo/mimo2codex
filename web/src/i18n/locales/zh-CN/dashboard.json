@@ -1,0 +1,81 @@
+{
+  "title": "概览",
+  "setupBanner": "第一次用？看「<1>对接指引</1>」页面 — 一键拿到把 Codex 接到 mimo2codex 的配置片段（含 auth.json + config.toml）。",
+  "range": {
+    "label": "统计窗口",
+    "options": {
+      "24h": "24 小时",
+      "7d": "7 天",
+      "30d": "30 天"
+    }
+  },
+  "card": {
+    "requests": {
+      "label": "请求总数",
+      "sub": "含错误请求"
+    },
+    "errors": {
+      "label": "错误数",
+      "sub": "错误率：{{rate}}%"
+    },
+    "tokens": {
+      "label": "Token 消耗（合计）",
+      "sub": "prompt + completion"
+    },
+    "providers": {
+      "label": "已启用 Provider",
+      "subEmpty": "无"
+    }
+  },
+  "chart": {
+    "title": "Token 消耗趋势",
+    "bucket": {
+      "label": "粒度",
+      "hour": "按小时",
+      "day": "按日"
+    },
+    "loading": "加载中…",
+    "empty": "该窗口内暂无 token 消耗",
+    "tooltipEmpty": "无请求",
+    "otherSeries": "其他 ({{count}} 个模型)",
+    "otherShort": "其他 ({{count}})",
+    "legendTitle": "点击切换显示 {{label}}"
+  },
+  "byModel": {
+    "title": "按模型统计",
+    "columns": {
+      "provider": "Provider",
+      "model": "模型",
+      "requests": "请求",
+      "errors": "错误",
+      "prompt": "Prompt",
+      "completion": "Completion",
+      "total": "合计"
+    },
+    "empty": "该窗口内暂无请求记录"
+  },
+  "mappings": {
+    "title": "模型映射记录",
+    "columns": {
+      "provider": "Provider",
+      "clientModel": "客户端发的 model",
+      "upstreamModel": "实际上游 model",
+      "count": "命中次数",
+      "lastSeen": "最近一次"
+    },
+    "empty": "尚无映射记录（发送一次请求即可）"
+  },
+  "recent": {
+    "title": "最近 10 条请求",
+    "columns": {
+      "ts": "时间",
+      "provider": "Provider",
+      "model": "模型",
+      "endpoint": "端点",
+      "status": "状态",
+      "tokens": "tok",
+      "duration": "耗时"
+    },
+    "empty": "暂无请求"
+  }
+}

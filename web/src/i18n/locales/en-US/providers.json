@@ -1,0 +1,101 @@
+{
+  "title": "Providers",
+  "intro": "Manage generic OpenAI-compatible / Responses-passthrough providers from providers.json. Changes require a <strong>restart of mimo2codex</strong> for the runtime registry to reload. See <1>generic-providers docs</1> for field details.",
+  "file": {
+    "title": "File location",
+    "explicit": "specified via MIMO2CODEX_PROVIDERS_FILE",
+    "notCreated": "not created yet — will be created on save",
+    "notEditable": "Not editable: {{notice}}",
+    "currentError": "Current file has issues: {{error}} (you can still overwrite from the UI)"
+  },
+  "action": {
+    "create": "+ Add Provider",
+    "rawJson": "Edit raw JSON",
+    "refresh": "Refresh",
+    "edit": "Edit",
+    "delete": "Delete"
+  },
+  "table": {
+    "columns": {
+      "id": "ID",
+      "displayName": "Display name",
+      "baseUrl": "baseUrl",
+      "defaultModel": "Default model",
+      "wireApi": "wireApi",
+      "models": "Declared models",
+      "ops": "Actions"
+    },
+    "shortcutTag": "shortcut {{value}}",
+    "modelCountTag": "{{count}}",
+    "passthroughTag": "passthrough",
+    "empty": "No generic providers yet. Click '+ Add Provider' to start."
+  },
+  "saved": {
+    "withRestart": "Saved to {{path}} — restart mimo2codex to apply",
+    "withoutRestart": "Saved to {{path}}"
+  },
+  "deleteConfirm": "Delete provider \"{{id}}\"?",
+  "form": {
+    "titleCreate": "Add Provider",
+    "titleEdit": "Edit {{name}}",
+    "fields": {
+      "id": "ID",
+      "idHint": "Letters / digits / - / _ only; must not conflict with builtin mimo / deepseek",
+      "idPlaceholder": "qwen / kimi / my-vllm",
+      "displayName": "Display name",
+      "displayNamePlaceholder": "defaults to id if empty",
+      "shortcut": "shortcut",
+      "shortcutPlaceholder": "defaults to id if empty",
+      "shortcutHint": "CLI uses --model <shortcut> to switch the default provider",
+      "baseUrl": "baseUrl",
+      "baseUrlPlaceholder": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "baseUrlHint": "Upstream base URL; do <strong>not</strong> include /chat/completions",
+      "envKey": "envKey",
+      "envKeyPlaceholder": "QWEN_API_KEY",
+      "envKeyHint": "Which environment variable holds the API key",
+      "defaultModel": "defaultModel",
+      "defaultModelPlaceholder": "qwen3-max",
+      "wireApi": "wireApi",
+      "wireApiChat": "chat",
+      "wireApiChatSub": "Default · translates into Chat Completions",
+      "wireApiResponses": "responses",
+      "wireApiResponsesSub": "Passthrough · no protocol translation",
+      "features": "features",
+      "forceParallelToolCalls": "forceParallelToolCalls",
+      "forceParallelToolCallsSub": "Allow multiple tool calls per turn — helps agentic flows",
+      "webSearch": "webSearch",
+      "webSearchSub": "Only meaningful for upstreams with builtin web_search",
+      "docsUrl": "docsUrl",
+      "docsUrlHint": "Optional — shown in the 'missing key' error as a link"
+    },
+    "models": {
+      "title": "Declared models (optional)",
+      "hint": "Leave empty for <strong>passthrough</strong> — any model id the client sends is forwarded. If you do declare models, only ids (and aliases) listed here will be routed to this provider via byClientModel; declaring contextWindow / maxOutputTokens lets print-config emit accurate toml fields.",
+      "idPlaceholder": "model id (required, e.g. qwen3-max)",
+      "contextPlaceholder": "contextWindow",
+      "maxOutputPlaceholder": "maxOutputTokens",
+      "addBtn": "+ Add model",
+      "vision": "vision",
+      "reasoning": "reasoning",
+      "webSearch": "web search"
+    },
+    "validate": {
+      "idRequired": "id is required",
+      "idReserved": "id \"{{id}}\" conflicts with a builtin provider — pick another",
+      "idFormat": "id \"{{id}}\" must start with a letter/digit; only letters, digits, - and _ are allowed (no spaces)",
+      "idDup": "A provider with id \"{{id}}\" already exists — pick another",
+      "baseUrlRequired": "baseUrl is required",
+      "envKeyRequired": "envKey is required",
+      "defaultModelRequired": "defaultModel is required"
+    }
+  },
+  "rawJson": {
+    "title": "Edit raw JSON",
+    "hint": "Edit providers.json verbatim. Save is disabled while JSON is invalid.",
+    "valid": "✓ valid JSON",
+    "invalid": "✗ invalid JSON",
+    "parseError": "JSON parse failed: {{message}}",
+    "notObject": "JSON must be an object",
+    "missingProviders": "JSON must have a top-level 'providers' array"
+  }
+}

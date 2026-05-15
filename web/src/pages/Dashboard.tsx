@@ -1,5 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { Trans, useTranslation } from "react-i18next";
+import {
+  Alert,
+  Card,
+  Col,
+  Row,
+  Segmented,
+  Space,
+  Statistic,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
+import type { ColumnsType } from "antd/es/table";
 import {
   api,
   type LogRow,
@@ -14,6 +28,8 @@ import { TokenChart } from "../components/TokenChart";
 
 const SETUP_BANNER_KEY = "m2c.setup-banner-dismissed";
 
+type StatsRow = StatsResponse["rows"][number];
+
 function formatTokens(n: number): string {
   if (n < 1000) return String(n);
   if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
@@ -25,14 +41,13 @@ function formatTime(ts: number): string {
 }
 
 export function Dashboard() {
+  const { t } = useTranslation("dashboard");
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [timeseries, setTimeseries] = useState<TokenTimeseriesResponse | null>(null);
   const [logs, setLogs] = useState<LogRow[]>([]);
   const [mappings, setMappings] = useState<MappingRow[]>([]);
   const [range, setRange] = useState<"24h" | "7d" | "30d">("24h");
-  // Chart-only granularity toggle. The cards/tables above still use a single
-  // range total; the chart picks between day and hour buckets.
   const [bucket, setBucket] = useState<TimeseriesBucket>("hour");
   const [error, setError] = useState<string | null>(null);
   const [showSetupBanner, setShowSetupBanner] = useState<boolean>(() => {
@@ -52,7 +67,7 @@ export function Dashboard() {
   async function load() {
     try {
       setError(null);
-      const [p, s, t, l, m] = await Promise.all([
+      const [p, s, ts, l, m] = await Promise.all([
         api.providers(),
         api.stats(range),
         api.tokenTimeseries(range, bucket),
@@ -61,7 +76,7 @@ export function Dashboard() {
       ]);
       setProviders(p.providers);
       setStats(s);
-      setTimeseries(t);
+      setTimeseries(ts);
       setLogs(l.logs);
       setMappings(m.mappings);
     } catch (err) {
@@ -71,227 +86,336 @@ export function Dashboard() {
 
   useEffect(() => {
     void load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
+    const tid = setInterval(load, 5000);
+    return () => clearInterval(tid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range, bucket]);
 
-  const totals = stats?.rows.reduce(
-    (acc, r) => ({
-      requests: acc.requests + r.requests,
-      errors: acc.errors + r.errors,
-      tokens: acc.tokens + r.total_tokens,
-    }),
-    { requests: 0, errors: 0, tokens: 0 }
-  ) ?? { requests: 0, errors: 0, tokens: 0 };
+  const totals = useMemo(
+    () =>
+      stats?.rows.reduce(
+        (acc, r) => ({
+          requests: acc.requests + r.requests,
+          errors: acc.errors + r.errors,
+          tokens: acc.tokens + r.total_tokens,
+        }),
+        { requests: 0, errors: 0, tokens: 0 }
+      ) ?? { requests: 0, errors: 0, tokens: 0 },
+    [stats]
+  );
+
+  const enabledProviders = useMemo(
+    () => providers.filter((p) => p.enabled),
+    [providers]
+  );
+
+  const statsColumns: ColumnsType<StatsRow> = useMemo(
+    () => [
+      {
+        title: t("byModel.columns.provider"),
+        dataIndex: "provider_id",
+        key: "provider_id",
+        render: (v: string) => <Tag>{v}</Tag>,
+      },
+      {
+        title: t("byModel.columns.model"),
+        dataIndex: "upstream_model",
+        key: "upstream_model",
+        render: (v: string) => <code>{v}</code>,
+      },
+      {
+        title: t("byModel.columns.requests"),
+        dataIndex: "requests",
+        key: "requests",
+        align: "right",
+      },
+      {
+        title: t("byModel.columns.errors"),
+        dataIndex: "errors",
+        key: "errors",
+        align: "right",
+      },
+      {
+        title: t("byModel.columns.prompt"),
+        dataIndex: "prompt_tokens",
+        key: "prompt",
+        align: "right",
+        render: (v: number) => formatTokens(v),
+      },
+      {
+        title: t("byModel.columns.completion"),
+        dataIndex: "completion_tokens",
+        key: "completion",
+        align: "right",
+        render: (v: number) => formatTokens(v),
+      },
+      {
+        title: t("byModel.columns.total"),
+        dataIndex: "total_tokens",
+        key: "total",
+        align: "right",
+        render: (v: number) => formatTokens(v),
+      },
+    ],
+    [t]
+  );
+
+  const mappingColumns: ColumnsType<MappingRow> = useMemo(
+    () => [
+      {
+        title: t("mappings.columns.provider"),
+        dataIndex: "provider_id",
+        key: "provider_id",
+        render: (v: string) => <Tag>{v}</Tag>,
+      },
+      {
+        title: t("mappings.columns.clientModel"),
+        dataIndex: "client_model",
+        key: "client_model",
+        render: (v: string) => <code>{v}</code>,
+      },
+      {
+        title: t("mappings.columns.upstreamModel"),
+        dataIndex: "upstream_model",
+        key: "upstream_model",
+        render: (v: string) => <code>{v}</code>,
+      },
+      {
+        title: t("mappings.columns.count"),
+        dataIndex: "count",
+        key: "count",
+        align: "right",
+      },
+      {
+        title: t("mappings.columns.lastSeen"),
+        dataIndex: "last_seen",
+        key: "last_seen",
+        render: (v: number) => formatTime(v),
+      },
+    ],
+    [t]
+  );
+
+  const recentColumns: ColumnsType<LogRow> = useMemo(
+    () => [
+      {
+        title: t("recent.columns.ts"),
+        dataIndex: "ts",
+        key: "ts",
+        render: (v: number) => formatTime(v),
+      },
+      {
+        title: t("recent.columns.provider"),
+        dataIndex: "provider_id",
+        key: "provider_id",
+        render: (v: string) => <Tag>{v}</Tag>,
+      },
+      {
+        title: t("recent.columns.model"),
+        dataIndex: "upstream_model",
+        key: "upstream_model",
+        render: (v: string) => <code>{v}</code>,
+      },
+      {
+        title: t("recent.columns.endpoint"),
+        dataIndex: "endpoint",
+        key: "endpoint",
+        render: (v: string) => <code>{v}</code>,
+      },
+      {
+        title: t("recent.columns.status"),
+        key: "status",
+        render: (_, row) => (
+          <Tag color={row.status_code >= 400 ? "error" : "success"}>
+            {row.status_code}
+          </Tag>
+        ),
+      },
+      {
+        title: t("recent.columns.tokens"),
+        dataIndex: "total_tokens",
+        key: "total_tokens",
+        align: "right",
+        render: (v: number | null) => (v != null ? v : "—"),
+      },
+      {
+        title: t("recent.columns.duration"),
+        dataIndex: "duration_ms",
+        key: "duration_ms",
+        align: "right",
+        render: (v: number) => `${v} ms`,
+      },
+    ],
+    [t]
+  );
+
+  const errorRate = totals.requests
+    ? ((totals.errors / totals.requests) * 100).toFixed(1)
+    : "0.0";
 
   return (
-    <div>
-      <h2>概览</h2>
+    <>
+      <Typography.Title level={2} style={{ marginTop: 0 }}>
+        {t("title")}
+      </Typography.Title>
 
       {error && (
-        <div className="banner err">
-          <span className="ic">!</span>
-          <div className="body">{error}</div>
-        </div>
+        <Alert
+          type="error"
+          showIcon
+          message={error}
+          closable
+          onClose={() => setError(null)}
+          style={{ marginBottom: 16 }}
+        />
       )}
 
       {showSetupBanner && (
-        <div className="banner info">
-          <span className="ic">👋</span>
-          <div className="body">
-            第一次用？看「<Link to="/setup">对接指引</Link>」页面 — 一键拿到把
-            Codex 接到 mimo2codex 的配置片段（含 auth.json + config.toml）。
-          </div>
-          <button
-            className="secondary"
-            onClick={dismissSetupBanner}
-            style={{ alignSelf: "flex-start" }}
-          >
-            关闭
-          </button>
-        </div>
+        <Alert
+          type="info"
+          showIcon
+          closable
+          onClose={dismissSetupBanner}
+          style={{ marginBottom: 16 }}
+          message={
+            <Trans i18nKey="setupBanner" ns="dashboard">
+              {"placeholder"}
+              <Link to="/setup">placeholder</Link>
+              {"placeholder"}
+            </Trans>
+          }
+        />
       )}
 
       <KeyStatusBanner providers={providers} />
 
-      <div className="row" style={{ marginTop: 16 }}>
-        <span style={{ color: "var(--muted)", fontSize: 13 }}>统计窗口：</span>
-        {(["24h", "7d", "30d"] as const).map((r) => (
-          <button
-            key={r}
-            className={r === range ? "" : "secondary"}
-            onClick={() => setRange(r)}
-          >
-            {r}
-          </button>
-        ))}
-      </div>
+      <Space style={{ marginTop: 16, marginBottom: 16 }}>
+        <span style={{ color: "var(--muted)", fontSize: 13 }}>
+          {t("range.label")}
+        </span>
+        <Segmented<"24h" | "7d" | "30d">
+          value={range}
+          options={[
+            { value: "24h", label: t("range.options.24h") },
+            { value: "7d", label: t("range.options.7d") },
+            { value: "30d", label: t("range.options.30d") },
+          ]}
+          onChange={setRange}
+        />
+      </Space>
 
-      <div className="cards">
-        <div className="card">
-          <div className="label">请求总数</div>
-          <div className="value">{totals.requests.toLocaleString()}</div>
-          <div className="sub">含错误请求</div>
-        </div>
-        <div className="card">
-          <div className="label">错误数</div>
-          <div className="value">{totals.errors.toLocaleString()}</div>
-          <div className="sub">
-            错误率：
-            {totals.requests
-              ? ((totals.errors / totals.requests) * 100).toFixed(1)
-              : "0.0"}
-            %
-          </div>
-        </div>
-        <div className="card">
-          <div className="label">Token 消耗（合计）</div>
-          <div className="value">{formatTokens(totals.tokens)}</div>
-          <div className="sub">prompt + completion</div>
-        </div>
-        <div className="card">
-          <div className="label">已启用 Provider</div>
-          <div className="value">
-            {providers.filter((p) => p.enabled).length}/{providers.length}
-          </div>
-          <div className="sub">
-            {providers
-              .filter((p) => p.enabled)
-              .map((p) => p.display_name)
-              .join(" · ") || "无"}
-          </div>
-        </div>
-      </div>
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={12} md={6}>
+          <Card>
+            <Statistic
+              title={t("card.requests.label")}
+              value={totals.requests}
+              groupSeparator=","
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t("card.requests.sub")}
+            </Typography.Text>
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card>
+            <Statistic
+              title={t("card.errors.label")}
+              value={totals.errors}
+              groupSeparator=","
+              valueStyle={{ color: totals.errors > 0 ? "var(--ant-color-error)" : undefined }}
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t("card.errors.sub", { rate: errorRate })}
+            </Typography.Text>
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card>
+            <Statistic
+              title={t("card.tokens.label")}
+              value={formatTokens(totals.tokens)}
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t("card.tokens.sub")}
+            </Typography.Text>
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card>
+            <Statistic
+              title={t("card.providers.label")}
+              value={`${enabledProviders.length}/${providers.length}`}
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {enabledProviders.map((p) => p.display_name).join(" · ") ||
+                t("card.providers.subEmpty")}
+            </Typography.Text>
+          </Card>
+        </Col>
+      </Row>
 
-      <div
-        className="row"
-        style={{ marginTop: 24, marginBottom: 8, justifyContent: "space-between" }}
+      <Card
+        title={t("chart.title")}
+        style={{ marginBottom: 16 }}
+        extra={
+          <Space>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t("chart.bucket.label")}
+            </Typography.Text>
+            <Segmented<TimeseriesBucket>
+              size="small"
+              value={bucket}
+              options={[
+                { value: "hour", label: t("chart.bucket.hour") },
+                { value: "day", label: t("chart.bucket.day") },
+              ]}
+              onChange={setBucket}
+            />
+          </Space>
+        }
       >
-        <h3 style={{ margin: 0 }}>Token 消耗趋势</h3>
-        <div className="row" style={{ margin: 0 }}>
-          <span style={{ color: "var(--muted)", fontSize: 12 }}>粒度：</span>
-          {(["hour", "day"] as const).map((b) => (
-            <button
-              key={b}
-              className={b === bucket ? "" : "secondary"}
-              onClick={() => setBucket(b)}
-              style={{ padding: "4px 10px", fontSize: 12 }}
-            >
-              {b === "hour" ? "按小时" : "按日"}
-            </button>
-          ))}
-        </div>
-      </div>
-      {timeseries ? (
-        <TokenChart data={timeseries} />
-      ) : (
-        <div className="empty">加载中…</div>
-      )}
+        {timeseries ? (
+          <TokenChart data={timeseries} />
+        ) : (
+          <Typography.Text type="secondary">{t("chart.loading")}</Typography.Text>
+        )}
+      </Card>
 
-      <h3>按模型统计</h3>
-      {stats && stats.rows.length > 0 ? (
-        <table>
-          <thead>
-            <tr>
-              <th>Provider</th>
-              <th>模型</th>
-              <th style={{ textAlign: "right" }}>请求</th>
-              <th style={{ textAlign: "right" }}>错误</th>
-              <th style={{ textAlign: "right" }}>Prompt</th>
-              <th style={{ textAlign: "right" }}>Completion</th>
-              <th style={{ textAlign: "right" }}>合计</th>
-            </tr>
-          </thead>
-          <tbody>
-            {stats.rows.map((r) => (
-              <tr key={`${r.provider_id}-${r.upstream_model}`}>
-                <td>
-                  <span className="tag">{r.provider_id}</span>
-                </td>
-                <td className="mono">{r.upstream_model}</td>
-                <td style={{ textAlign: "right" }}>{r.requests}</td>
-                <td style={{ textAlign: "right" }}>{r.errors}</td>
-                <td style={{ textAlign: "right" }}>{formatTokens(r.prompt_tokens)}</td>
-                <td style={{ textAlign: "right" }}>{formatTokens(r.completion_tokens)}</td>
-                <td style={{ textAlign: "right" }}>{formatTokens(r.total_tokens)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : (
-        <div className="empty">该窗口内暂无请求记录</div>
-      )}
+      <Card title={t("byModel.title")} style={{ marginBottom: 16 }}>
+        <Table<StatsRow>
+          rowKey={(r) => `${r.provider_id}-${r.upstream_model}`}
+          dataSource={stats?.rows ?? []}
+          columns={statsColumns}
+          pagination={false}
+          size="middle"
+          locale={{ emptyText: t("byModel.empty") }}
+        />
+      </Card>
 
-      <h3>模型映射记录</h3>
-      {mappings.length > 0 ? (
-        <table>
-          <thead>
-            <tr>
-              <th>Provider</th>
-              <th>客户端发的 model</th>
-              <th>实际上游 model</th>
-              <th style={{ textAlign: "right" }}>命中次数</th>
-              <th>最近一次</th>
-            </tr>
-          </thead>
-          <tbody>
-            {mappings.map((m) => (
-              <tr key={`${m.provider_id}-${m.client_model}-${m.upstream_model}`}>
-                <td>
-                  <span className="tag">{m.provider_id}</span>
-                </td>
-                <td className="mono">{m.client_model}</td>
-                <td className="mono">{m.upstream_model}</td>
-                <td style={{ textAlign: "right" }}>{m.count}</td>
-                <td>{formatTime(m.last_seen)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : (
-        <div className="empty">尚无映射记录（发送一次请求即可）</div>
-      )}
+      <Card title={t("mappings.title")} style={{ marginBottom: 16 }}>
+        <Table<MappingRow>
+          rowKey={(r) =>
+            `${r.provider_id}-${r.client_model}-${r.upstream_model}`
+          }
+          dataSource={mappings}
+          columns={mappingColumns}
+          pagination={false}
+          size="middle"
+          locale={{ emptyText: t("mappings.empty") }}
+        />
+      </Card>
 
-      <h3>最近 10 条请求</h3>
-      {logs.length > 0 ? (
-        <table>
-          <thead>
-            <tr>
-              <th>时间</th>
-              <th>Provider</th>
-              <th>模型</th>
-              <th>端点</th>
-              <th>状态</th>
-              <th style={{ textAlign: "right" }}>tok</th>
-              <th style={{ textAlign: "right" }}>耗时</th>
-            </tr>
-          </thead>
-          <tbody>
-            {logs.map((l) => (
-              <tr key={l.id}>
-                <td>{formatTime(l.ts)}</td>
-                <td>
-                  <span className="tag">{l.provider_id}</span>
-                </td>
-                <td className="mono">{l.upstream_model}</td>
-                <td className="mono">{l.endpoint}</td>
-                <td>
-                  <span className={`tag ${l.status_code >= 400 ? "err" : "ok"}`}>
-                    {l.status_code}
-                  </span>
-                </td>
-                <td style={{ textAlign: "right" }}>
-                  {l.total_tokens != null ? l.total_tokens : "—"}
-                </td>
-                <td style={{ textAlign: "right" }}>{l.duration_ms} ms</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : (
-        <div className="empty">暂无请求</div>
-      )}
-    </div>
+      <Card title={t("recent.title")}>
+        <Table<LogRow>
+          rowKey="id"
+          dataSource={logs}
+          columns={recentColumns}
+          pagination={false}
+          size="middle"
+          locale={{ emptyText: t("recent.empty") }}
+        />
+      </Card>
+    </>
   );
 }

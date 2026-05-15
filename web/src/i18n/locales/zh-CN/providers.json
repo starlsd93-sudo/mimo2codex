@@ -1,0 +1,101 @@
+{
+  "title": "通用 Provider",
+  "intro": "在这里管理 providers.json 里的通用 OpenAI 兼容 / Responses 直透 provider。修改后需要 <strong>重启 mimo2codex</strong> 让运行时 registry 加载新配置。详细字段说明见 <1>generic-providers 文档</1>。",
+  "file": {
+    "title": "文件位置",
+    "explicit": "通过 MIMO2CODEX_PROVIDERS_FILE 指定",
+    "notCreated": "尚未创建——保存后自动新建",
+    "notEditable": "不可编辑：{{notice}}",
+    "currentError": "当前文件有问题：{{error}}（仍可在 UI 里重写覆盖）"
+  },
+  "action": {
+    "create": "+ 添加 Provider",
+    "rawJson": "编辑原始 JSON",
+    "refresh": "刷新",
+    "edit": "编辑",
+    "delete": "删除"
+  },
+  "table": {
+    "columns": {
+      "id": "ID",
+      "displayName": "显示名",
+      "baseUrl": "baseUrl",
+      "defaultModel": "默认模型",
+      "wireApi": "wireApi",
+      "models": "声明模型",
+      "ops": "操作"
+    },
+    "shortcutTag": "短码 {{value}}",
+    "modelCountTag": "{{count}} 个",
+    "passthroughTag": "任意透传",
+    "empty": "还没有通用 provider。点击「+ 添加 Provider」开始。"
+  },
+  "saved": {
+    "withRestart": "已保存到 {{path}} — 重启 mimo2codex 让配置生效",
+    "withoutRestart": "已保存到 {{path}}"
+  },
+  "deleteConfirm": "删除 provider \"{{id}}\"？",
+  "form": {
+    "titleCreate": "添加 Provider",
+    "titleEdit": "编辑 {{name}}",
+    "fields": {
+      "id": "ID",
+      "idHint": "仅字母数字 / - / _，不能与内置 mimo / deepseek 冲突",
+      "idPlaceholder": "qwen / kimi / my-vllm",
+      "displayName": "显示名",
+      "displayNamePlaceholder": "留空则用 id",
+      "shortcut": "shortcut",
+      "shortcutPlaceholder": "留空则用 id",
+      "shortcutHint": "CLI 启动时用 --model <shortcut> 切换默认 provider",
+      "baseUrl": "baseUrl",
+      "baseUrlPlaceholder": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "baseUrlHint": "上游 base URL；<strong>不要</strong>带 /chat/completions 后缀",
+      "envKey": "envKey",
+      "envKeyPlaceholder": "QWEN_API_KEY",
+      "envKeyHint": "从哪个环境变量读取 API key",
+      "defaultModel": "defaultModel",
+      "defaultModelPlaceholder": "qwen3-max",
+      "wireApi": "wireApi",
+      "wireApiChat": "chat",
+      "wireApiChatSub": "默认 · 翻译为 Chat Completions",
+      "wireApiResponses": "responses",
+      "wireApiResponsesSub": "直透 · 不做协议翻译",
+      "features": "features",
+      "forceParallelToolCalls": "forceParallelToolCalls",
+      "forceParallelToolCallsSub": "一回合多个工具调用，缓解 agentic 编程",
+      "webSearch": "webSearch",
+      "webSearchSub": "仅对支持 builtin web_search 的上游有意义",
+      "docsUrl": "docsUrl",
+      "docsUrlHint": "可选——缺 key 错误提示里的获取链接"
+    },
+    "models": {
+      "title": "声明模型（可选）",
+      "hint": "不填则<strong>任意透传</strong>——客户端发什么 model id 就转发什么。填了的话只有列在这里的 id（含别名）才会被 byClientModel 路由到此 provider；声明 contextWindow / maxOutputTokens 能让 print-config 输出正确的 toml 字段。",
+      "idPlaceholder": "model id（必填，如 qwen3-max）",
+      "contextPlaceholder": "contextWindow",
+      "maxOutputPlaceholder": "maxOutputTokens",
+      "addBtn": "+ 添加模型",
+      "vision": "vision",
+      "reasoning": "reasoning",
+      "webSearch": "web search"
+    },
+    "validate": {
+      "idRequired": "id 不能为空",
+      "idReserved": "id \"{{id}}\" 与内置 provider 冲突，请改用其他 id",
+      "idFormat": "id \"{{id}}\" 必须以字母数字开头，只允许字母数字 / - / _，不能含空格",
+      "idDup": "已存在 id \"{{id}}\" 的 provider，请改用其他 id",
+      "baseUrlRequired": "baseUrl 不能为空",
+      "envKeyRequired": "envKey 不能为空",
+      "defaultModelRequired": "defaultModel 不能为空"
+    }
+  },
+  "rawJson": {
+    "title": "原始 JSON 编辑",
+    "hint": "直接编辑 providers.json 全文。校验失败时保存按钮会禁用。",
+    "valid": "✓ JSON 语法正确",
+    "invalid": "✗ JSON 语法错误",
+    "parseError": "JSON 解析失败：{{message}}",
+    "notObject": "JSON 必须是对象",
+    "missingProviders": "JSON 顶层必须包含 providers 数组"
+  }
+}

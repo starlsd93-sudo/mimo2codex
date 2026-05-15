@@ -1,0 +1,81 @@
+{
+  "title": "Dashboard",
+  "setupBanner": "First time here? See <1>Setup Guide</1> — copy-paste config snippets to wire Codex into mimo2codex (auth.json + config.toml).",
+  "range": {
+    "label": "Range",
+    "options": {
+      "24h": "24h",
+      "7d": "7d",
+      "30d": "30d"
+    }
+  },
+  "card": {
+    "requests": {
+      "label": "Total requests",
+      "sub": "incl. errors"
+    },
+    "errors": {
+      "label": "Errors",
+      "sub": "Error rate: {{rate}}%"
+    },
+    "tokens": {
+      "label": "Tokens used (total)",
+      "sub": "prompt + completion"
+    },
+    "providers": {
+      "label": "Enabled providers",
+      "subEmpty": "none"
+    }
+  },
+  "chart": {
+    "title": "Token usage trend",
+    "bucket": {
+      "label": "Granularity",
+      "hour": "Hourly",
+      "day": "Daily"
+    },
+    "loading": "Loading…",
+    "empty": "No token usage in this window",
+    "tooltipEmpty": "No requests",
+    "otherSeries": "Others ({{count}} models)",
+    "otherShort": "Others ({{count}})",
+    "legendTitle": "Click to toggle {{label}}"
+  },
+  "byModel": {
+    "title": "By model",
+    "columns": {
+      "provider": "Provider",
+      "model": "Model",
+      "requests": "Requests",
+      "errors": "Errors",
+      "prompt": "Prompt",
+      "completion": "Completion",
+      "total": "Total"
+    },
+    "empty": "No requests in this window"
+  },
+  "mappings": {
+    "title": "Model mappings",
+    "columns": {
+      "provider": "Provider",
+      "clientModel": "Client model",
+      "upstreamModel": "Upstream model",
+      "count": "Hits",
+      "lastSeen": "Last seen"
+    },
+    "empty": "No mapping records yet (send a request to populate)"
+  },
+  "recent": {
+    "title": "Recent 10 requests",
+    "columns": {
+      "ts": "Time",
+      "provider": "Provider",
+      "model": "Model",
+      "endpoint": "Endpoint",
+      "status": "Status",
+      "tokens": "tok",
+      "duration": "Duration"
+    },
+    "empty": "No requests yet"
+  }
+}

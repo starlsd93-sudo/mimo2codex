@@ -1,18 +1,7 @@
 import { useMemo, useState } from "react";
+import { theme } from "antd";
+import { useTranslation } from "react-i18next";
 import type { TokenTimeseriesResponse, TokenTimeseriesSeries } from "../api/client";
-
-// Palette tuned for the dark theme (panel #161b22). Cycled through; with
-// the top-N rollup we never exceed this length.
-const COLORS = [
-  "#4f8cf7", // accent blue
-  "#3fb950", // ok green
-  "#d29922", // warn amber
-  "#f85149", // err red
-  "#a371f7", // purple
-  "#1f6feb", // deeper blue
-  "#e3b341", // gold
-  "#8b95a3", // muted grey (fallback / "其他")
-];
 
 // Number of models to plot individually before rolling everything else into
 // a single "其他" series. Keeps the chart legible at 6 distinct colors.
@@ -27,6 +16,23 @@ const PAD_BOTTOM = 32;
 const CHART_W = 720;
 const CHART_H = 240;
 
+// Palette derived from antd tokens so the chart picks up the active theme.
+// The trailing entry is reserved for the "其他" rollup series.
+// antd 5 GlobalToken only exposes semantic colors (primary/success/...) — the
+// extra hues are kept literal so the palette stays at 8 distinct lines.
+function paletteFromToken(t: ReturnType<typeof theme.useToken>["token"]): string[] {
+  return [
+    t.colorPrimary,
+    t.colorSuccess,
+    t.colorWarning,
+    t.colorError,
+    "#a371f7",
+    "#1f6feb",
+    "#e3b341",
+    t.colorTextSecondary,
+  ];
+}
+
 function formatTokens(n: number): string {
   if (n === 0) return "0";
   if (n < 1000) return String(n);
@@ -34,9 +40,6 @@ function formatTokens(n: number): string {
   return `${(n / 1_000_000).toFixed(2)}M`;
 }
 
-// Compress bucket labels for the x-axis. Full label still shown in tooltip.
-//   "YYYY-MM-DD"    → "MM-DD"
-//   "YYYY-MM-DD HH" → "HH:00"  (date appears via dayBreak markers below)
 function shortBucket(label: string, bucket: "day" | "hour"): string {
   if (bucket === "hour") {
     const parts = label.split(" ");
@@ -46,13 +49,9 @@ function shortBucket(label: string, bucket: "day" | "hour"): string {
 }
 
 function bucketDate(label: string): string {
-  // Returns the YYYY-MM-DD component of a bucket label, regardless of granularity.
   return label.length >= 10 ? label.slice(0, 10) : label;
 }
 
-// "Nice" round number ≥ value, snapped to 1/2/5 × 10ⁿ. Used as the y-axis
-// max so labels read 50k, 100k, 200k, 500k, 1M etc. instead of arbitrary
-// fractions of the raw peak.
 function niceCeil(value: number): number {
   if (value <= 0) return 1;
   const pow = Math.pow(10, Math.floor(Math.log10(value)));
@@ -71,14 +70,20 @@ interface RolledUpSeries extends TokenTimeseriesSeries {
   isOther?: boolean;
 }
 
-function rollupSeries(series: TokenTimeseriesSeries[], bucketCount: number): RolledUpSeries[] {
+function rollupSeries(
+  series: TokenTimeseriesSeries[],
+  bucketCount: number,
+  colors: string[],
+  otherLabel: (count: number) => string,
+  otherShort: (count: number) => string
+): RolledUpSeries[] {
   if (series.length === 0) return [];
   const top = series.slice(0, MAX_SERIES);
   const rest = series.slice(MAX_SERIES);
   const result: RolledUpSeries[] = top.map((s, i) => ({
     ...s,
     label: s.upstream_model,
-    color: COLORS[i % (COLORS.length - 1)], // leave last color for "其他"
+    color: colors[i % (colors.length - 1)],
   }));
   if (rest.length > 0) {
     const tokens = new Array(bucketCount).fill(0);
@@ -95,13 +100,13 @@ function rollupSeries(series: TokenTimeseriesSeries[], bucketCount: number): Rol
     }
     result.push({
       provider_id: "*",
-      upstream_model: `其他 (${rest.length})`,
+      upstream_model: otherShort(rest.length),
       tokens,
       prompt_tokens: prompt,
       completion_tokens: completion,
       total,
-      label: `其他 (${rest.length} 个模型)`,
-      color: COLORS[COLORS.length - 1],
+      label: otherLabel(rest.length),
+      color: colors[colors.length - 1],
       isOther: true,
     });
   }
@@ -109,14 +114,22 @@ function rollupSeries(series: TokenTimeseriesSeries[], bucketCount: number): Rol
 }
 
 export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
-  // Per-series visibility (legend click toggles). Initialised true on first
-  // render and stays in component state across re-renders.
+  const { t } = useTranslation("dashboard");
+  const { token } = theme.useToken();
+  const colors = useMemo(() => paletteFromToken(token), [token]);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [hover, setHover] = useState<{ x: number; bucketIdx: number } | null>(null);
 
   const allSeries = useMemo(
-    () => rollupSeries(data.series, data.buckets.length),
-    [data.series, data.buckets.length]
+    () =>
+      rollupSeries(
+        data.series,
+        data.buckets.length,
+        colors,
+        (count) => t("chart.otherSeries", { count }),
+        (count) => t("chart.otherShort", { count })
+      ),
+    [data.series, data.buckets.length, colors, t]
   );
 
   const visibleSeries = useMemo(
@@ -124,8 +137,6 @@ export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
     [allSeries, hidden]
   );
 
-  // Y-axis scale from the visible series only. As the user toggles a noisy
-  // model off the chart re-scales to fit what remains.
   const yMax = useMemo(() => {
     let peak = 0;
     for (const s of visibleSeries) {
@@ -139,7 +150,6 @@ export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
   const bucketCount = data.buckets.length;
   const plotW = CHART_W - PAD_LEFT - PAD_RIGHT;
   const plotH = CHART_H - PAD_TOP - PAD_BOTTOM;
-  // With N buckets we have N-1 segments. Bucket i sits at PAD_LEFT + i*stepX.
   const stepX = bucketCount > 1 ? plotW / (bucketCount - 1) : 0;
 
   function xFor(i: number): number {
@@ -158,14 +168,9 @@ export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
     setHidden(next);
   }
 
-  // X-axis label thinning: only show every Nth label so the strip doesn't
-  // overlap when range=30d packs 30 ticks into ~660px, or range=7d × hour
-  // packs 168 ticks.
   const targetLabels = data.bucket === "hour" ? 10 : 8;
   const xLabelStep = Math.max(1, Math.ceil(bucketCount / targetLabels));
 
-  // For hourly buckets crossing date boundaries, mark where the date changes
-  // so the chart shows a faint divider + the new date appears in the label.
   const dayBreaks: number[] = [];
   if (data.bucket === "hour") {
     let prev = "";
@@ -175,19 +180,18 @@ export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
       prev = d;
     }
   }
-  // When hourly + crossing midnight, also show the date once per day on the
-  // x-axis instead of just HH:00 over and over.
+
   function xLabelFor(i: number): string {
     if (data.bucket === "hour") {
       const isStart = i === 0 || dayBreaks.includes(i);
       if (isStart) {
-        // First hour of a day → show "MM-DD HH:00" so the date context shows
         const parts = data.buckets[i].split(" ");
         return parts.length === 2 ? `${parts[0].slice(5)} ${parts[1]}:00` : data.buckets[i];
       }
     }
     return shortBucket(data.buckets[i], data.bucket);
   }
+
   const yTicks = useMemo(() => {
     const steps = 4;
     const ticks: number[] = [];
@@ -198,7 +202,6 @@ export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
   function onMouseMove(e: React.MouseEvent<SVGSVGElement>) {
     if (bucketCount === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    // Map screen x to viewBox x (svg may be scaled by CSS width).
     const svgX = ((e.clientX - rect.left) / rect.width) * CHART_W;
     if (svgX < PAD_LEFT || svgX > CHART_W - PAD_RIGHT) {
       setHover(null);
@@ -214,11 +217,15 @@ export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
     setHover(null);
   }
 
-  // Empty state — no data in window.
   const allEmpty = visibleSeries.every((s) => s.total === 0);
 
+  const borderColor = token.colorBorderSecondary;
+  const subtleColor = token.colorTextSecondary;
+  const accentColor = token.colorPrimary;
+  const fgColor = token.colorText;
+
   return (
-    <div className="chart-card">
+    <div style={{ position: "relative" }}>
       <svg
         viewBox={`0 0 ${CHART_W} ${CHART_H}`}
         width="100%"
@@ -228,9 +235,8 @@ export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
         onMouseLeave={onMouseLeave}
         style={{ display: "block", cursor: "crosshair" }}
       >
-        {/* y-axis grid lines + labels */}
-        {yTicks.map((t, i) => {
-          const y = yFor(t);
+        {yTicks.map((tick, i) => {
+          const y = yFor(tick);
           return (
             <g key={i}>
               <line
@@ -238,7 +244,7 @@ export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
                 x2={CHART_W - PAD_RIGHT}
                 y1={y}
                 y2={y}
-                stroke="var(--border)"
+                stroke={borderColor}
                 strokeDasharray={i === 0 ? "0" : "2 4"}
                 strokeWidth="1"
               />
@@ -246,16 +252,15 @@ export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
                 x={PAD_LEFT - 8}
                 y={y + 4}
                 textAnchor="end"
-                fill="var(--muted)"
+                fill={subtleColor}
                 fontSize="10"
               >
-                {formatTokens(t)}
+                {formatTokens(tick)}
               </text>
             </g>
           );
         })}
 
-        {/* faint dividers where the date rolls over (hourly buckets only) */}
         {dayBreaks.map((i) => (
           <line
             key={`db-${i}`}
@@ -263,13 +268,12 @@ export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
             x2={xFor(i)}
             y1={PAD_TOP}
             y2={PAD_TOP + plotH}
-            stroke="var(--border)"
+            stroke={borderColor}
             strokeWidth="1"
             opacity="0.5"
           />
         ))}
 
-        {/* x-axis labels */}
         {data.buckets.map((day, i) => {
           if (i % xLabelStep !== 0 && i !== bucketCount - 1) return null;
           return (
@@ -278,7 +282,7 @@ export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
               x={xFor(i)}
               y={CHART_H - 10}
               textAnchor="middle"
-              fill="var(--muted)"
+              fill={subtleColor}
               fontSize="10"
             >
               {xLabelFor(i)}
@@ -286,25 +290,21 @@ export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
           );
         })}
 
-        {/* hover vertical guide */}
         {hover && (
           <line
             x1={hover.x}
             x2={hover.x}
             y1={PAD_TOP}
             y2={PAD_TOP + plotH}
-            stroke="var(--accent)"
+            stroke={accentColor}
             strokeWidth="1"
             strokeDasharray="3 3"
             opacity="0.6"
           />
         )}
 
-        {/* lines */}
         {visibleSeries.map((s) => {
-          const pts = s.tokens
-            .map((v, i) => `${xFor(i)},${yFor(v)}`)
-            .join(" ");
+          const pts = s.tokens.map((v, i) => `${xFor(i)},${yFor(v)}`).join(" ");
           return (
             <g key={s.upstream_model}>
               <polyline
@@ -315,7 +315,6 @@ export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
                 strokeLinejoin="round"
                 strokeLinecap="round"
               />
-              {/* dots — only render if not too crowded */}
               {bucketCount <= 14 &&
                 s.tokens.map((v, i) => (
                   <circle
@@ -337,56 +336,151 @@ export function TokenChart({ data }: { data: TokenTimeseriesResponse }) {
             x={CHART_W / 2}
             y={CHART_H / 2}
             textAnchor="middle"
-            fill="var(--muted)"
+            fill={subtleColor}
             fontSize="13"
           >
-            该窗口内暂无 token 消耗
+            {t("chart.empty")}
           </text>
         )}
       </svg>
 
-      {/* Tooltip rendered as overlay so it can use HTML formatting */}
       {hover && !allEmpty && (
-        <div className="chart-tooltip" style={{ left: `${(hover.x / CHART_W) * 100}%` }}>
-          <div className="day">{data.buckets[hover.bucketIdx]}</div>
+        <div
+          style={{
+            position: "absolute",
+            top: 24,
+            left: `${(hover.x / CHART_W) * 100}%`,
+            transform: "translateX(-50%)",
+            background: token.colorBgElevated,
+            border: `1px solid ${borderColor}`,
+            borderRadius: 6,
+            padding: "8px 10px",
+            fontSize: 11,
+            pointerEvents: "none",
+            zIndex: 2,
+            boxShadow: token.boxShadow,
+            minWidth: 160,
+            color: fgColor,
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>
+            {data.buckets[hover.bucketIdx]}
+          </div>
           {visibleSeries.map((s) => {
             const v = s.tokens[hover.bucketIdx] ?? 0;
             if (v === 0) return null;
             return (
-              <div key={s.upstream_model} className="row">
-                <span className="dot" style={{ background: s.color }} />
-                <span className="label">{s.label}</span>
-                <span className="value">{v.toLocaleString()}</span>
+              <div
+                key={s.upstream_model}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "10px 1fr auto",
+                  gap: 6,
+                  alignItems: "center",
+                  margin: "2px 0",
+                }}
+              >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: s.color,
+                    display: "inline-block",
+                  }}
+                />
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {s.label}
+                </span>
+                <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                  {v.toLocaleString()}
+                </span>
               </div>
             );
           })}
           {visibleSeries.every((s) => (s.tokens[hover.bucketIdx] ?? 0) === 0) && (
-            <div className="empty">无请求</div>
+            <div style={{ color: subtleColor, fontStyle: "italic" }}>
+              {t("chart.tooltipEmpty")}
+            </div>
           )}
         </div>
       )}
 
-      {/* Legend */}
-      <div className="chart-legend">
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          flexWrap: "wrap",
+          marginTop: 12,
+          paddingTop: 12,
+          borderTop: `1px solid ${borderColor}`,
+        }}
+      >
         {allSeries.map((s) => {
           const isHidden = hidden.has(s.upstream_model);
           return (
             <button
               key={s.upstream_model}
               onClick={() => toggle(s.upstream_model)}
-              className={`legend-item ${isHidden ? "off" : ""}`}
-              title={`点击切换显示 ${s.label}`}
+              title={t("chart.legendTitle", { label: s.label })}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                background: token.colorFillTertiary,
+                border: `1px solid ${borderColor}`,
+                borderRadius: 100,
+                padding: "4px 10px 4px 6px",
+                fontSize: 11,
+                color: fgColor,
+                cursor: "pointer",
+                opacity: isHidden ? 0.4 : 1,
+                transition: "opacity 0.15s",
+                fontFamily: "inherit",
+              }}
             >
-              <span className="dot" style={{ background: s.color }} />
-              <span className="label">
-                {s.isOther ? s.label : (
+              <span
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: "50%",
+                  background: s.color,
+                  flexShrink: 0,
+                }}
+              />
+              <span
+                style={{
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, Menlo, monospace",
+                }}
+              >
+                {s.isOther ? (
+                  s.label
+                ) : (
                   <>
-                    <span className="muted">{s.provider_id}/</span>
+                    <span style={{ color: subtleColor }}>{s.provider_id}/</span>
                     {s.upstream_model}
                   </>
                 )}
               </span>
-              <span className="total">{formatTokens(s.total)}</span>
+              <span
+                style={{
+                  color: subtleColor,
+                  fontVariantNumeric: "tabular-nums",
+                  fontSize: 10.5,
+                  paddingLeft: 4,
+                  borderLeft: `1px solid ${borderColor}`,
+                  marginLeft: 4,
+                }}
+              >
+                {formatTokens(s.total)}
+              </span>
             </button>
           );
         })}

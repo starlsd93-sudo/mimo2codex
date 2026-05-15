@@ -1,4 +1,30 @@
 import { useEffect, useMemo, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
+import {
+  Alert,
+  Button,
+  Card,
+  Checkbox,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Radio,
+  Space,
+  Table,
+  Tag,
+  Typography,
+  message,
+} from "antd";
+import type { ColumnsType } from "antd/es/table";
+import {
+  PlusOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  CodeOutlined,
+  ReloadOutlined,
+  MinusCircleOutlined,
+} from "@ant-design/icons";
 import {
   api,
   type GenericProviderModelSpec,
@@ -9,12 +35,13 @@ import {
 // Built-in provider ids — the user cannot create generics with these.
 const RESERVED_IDS = new Set(["mimo", "deepseek"]);
 
-type FormState = GenericProviderSpec & {
-  // wireApi is optional in the wire type, but we always render a value
+interface FormValues extends GenericProviderSpec {
   wireApiDisplay: "chat" | "responses";
-};
+  forceParallelToolCalls: boolean;
+  featWebSearch: boolean;
+}
 
-function emptyForm(): FormState {
+function emptyFormValues(): FormValues {
   return {
     id: "",
     shortcut: "",
@@ -26,28 +53,32 @@ function emptyForm(): FormState {
     wireApiDisplay: "chat",
     models: [],
     features: { forceParallelToolCalls: false, webSearch: false },
+    forceParallelToolCalls: false,
+    featWebSearch: false,
     docsUrl: "",
   };
 }
 
-function specToForm(spec: GenericProviderSpec): FormState {
+function specToFormValues(spec: GenericProviderSpec): FormValues {
+  const wire = spec.wireApi ?? "chat";
   return {
     ...spec,
     shortcut: spec.shortcut ?? "",
     displayName: spec.displayName ?? "",
-    wireApi: spec.wireApi ?? "chat",
-    wireApiDisplay: spec.wireApi ?? "chat",
+    wireApi: wire,
+    wireApiDisplay: wire,
     models: spec.models ? spec.models.map((m) => ({ ...m })) : [],
     features: {
       forceParallelToolCalls: !!spec.features?.forceParallelToolCalls,
       webSearch: !!spec.features?.webSearch,
     },
+    forceParallelToolCalls: !!spec.features?.forceParallelToolCalls,
+    featWebSearch: !!spec.features?.webSearch,
     docsUrl: spec.docsUrl ?? "",
   };
 }
 
-// Strip empty optional fields so the persisted JSON stays tidy.
-function formToSpec(form: FormState): GenericProviderSpec {
+function formValuesToSpec(form: FormValues): GenericProviderSpec {
   const out: GenericProviderSpec = {
     id: form.id.trim(),
     baseUrl: form.baseUrl.trim(),
@@ -58,47 +89,27 @@ function formToSpec(form: FormState): GenericProviderSpec {
   if (form.displayName?.trim()) out.displayName = form.displayName.trim();
   if (form.wireApiDisplay === "responses") out.wireApi = "responses";
   const models = (form.models ?? [])
-    .map((m) => ({ ...m, id: m.id.trim() }))
+    .map((m) => ({ ...m, id: (m.id ?? "").trim() }))
     .filter((m) => m.id);
   if (models.length > 0) out.models = models;
   const features: Record<string, boolean> = {};
-  if (form.features?.forceParallelToolCalls) features.forceParallelToolCalls = true;
-  if (form.features?.webSearch) features.webSearch = true;
+  if (form.forceParallelToolCalls) features.forceParallelToolCalls = true;
+  if (form.featWebSearch) features.webSearch = true;
   if (Object.keys(features).length > 0) out.features = features;
   if (form.docsUrl?.trim()) out.docsUrl = form.docsUrl.trim();
   return out;
 }
 
-function validateForm(form: FormState, allSpecs: GenericProviderSpec[], originalId: string | null):
-  | { ok: true }
-  | { ok: false; error: string } {
-  const id = form.id.trim();
-  if (!id) return { ok: false, error: "id 不能为空" };
-  if (RESERVED_IDS.has(id))
-    return { ok: false, error: `id "${id}" 与内置 provider 冲突，请改用其他 id` };
-  if (!/^[a-z0-9][a-z0-9_-]*$/i.test(id))
-    return {
-      ok: false,
-      error: `id "${id}" 必须以字母数字开头，只允许字母数字 / - / _，不能含空格`,
-    };
-  for (const other of allSpecs) {
-    if (other.id === id && other.id !== originalId) {
-      return { ok: false, error: `已存在 id "${id}" 的 provider，请改用其他 id` };
-    }
-  }
-  if (!form.baseUrl.trim()) return { ok: false, error: "baseUrl 不能为空" };
-  if (!form.envKey.trim()) return { ok: false, error: "envKey 不能为空" };
-  if (!form.defaultModel.trim()) return { ok: false, error: "defaultModel 不能为空" };
-  return { ok: true };
-}
-
 export function Providers() {
+  const { t } = useTranslation("providers");
+  const [messageApi, msgCtx] = message.useMessage();
+  const [modal, modalCtx] = Modal.useModal();
   const [data, setData] = useState<GenericProvidersResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [editing, setEditing] = useState<
-    | { mode: "create"; form: FormState }
-    | { mode: "edit"; originalId: string; form: FormState }
+    | { mode: "create"; values: FormValues }
+    | { mode: "edit"; originalId: string; values: FormValues }
     | null
   >(null);
   const [rawEditor, setRawEditor] = useState<string | null>(null);
@@ -122,11 +133,10 @@ export function Providers() {
       setError(null);
       setSuccess(null);
       const resp = await api.saveGenericProviders(updated);
-      setSuccess(
-        resp.restartRequired
-          ? `已保存到 ${resp.path} — 重启 mimo2codex 让配置生效`
-          : `已保存到 ${resp.path}`
-      );
+      const key = resp.restartRequired ? "saved.withRestart" : "saved.withoutRestart";
+      const text = t(key, { path: resp.path });
+      setSuccess(text);
+      messageApi.success(text);
       await load();
     } catch (err) {
       setError((err as Error).message);
@@ -134,27 +144,61 @@ export function Providers() {
   }
 
   function startCreate() {
-    setEditing({ mode: "create", form: emptyForm() });
+    setEditing({ mode: "create", values: emptyFormValues() });
   }
   function startEdit(spec: GenericProviderSpec) {
-    setEditing({ mode: "edit", originalId: spec.id, form: specToForm(spec) });
-  }
-  function cancelEdit() {
-    setEditing(null);
+    setEditing({
+      mode: "edit",
+      originalId: spec.id,
+      values: specToFormValues(spec),
+    });
   }
 
-  async function commitForm() {
+  async function remove(id: string) {
+    if (!data) return;
+    modal.confirm({
+      title: t("deleteConfirm", { id }),
+      icon: <DeleteOutlined />,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        await save(data.specs.filter((s) => s.id !== id));
+      },
+    });
+  }
+
+  async function commitForm(values: FormValues) {
     if (!editing || !data) return;
-    const validation = validateForm(
-      editing.form,
-      data.specs,
-      editing.mode === "edit" ? editing.originalId : null
-    );
-    if (!validation.ok) {
-      setError(validation.error);
+    const id = values.id.trim();
+    if (!id) {
+      setError(t("form.validate.idRequired"));
       return;
     }
-    const next = formToSpec(editing.form);
+    if (RESERVED_IDS.has(id)) {
+      setError(t("form.validate.idReserved", { id }));
+      return;
+    }
+    if (!/^[a-z0-9][a-z0-9_-]*$/i.test(id)) {
+      setError(t("form.validate.idFormat", { id }));
+      return;
+    }
+    const originalId = editing.mode === "edit" ? editing.originalId : null;
+    if (data.specs.some((s) => s.id === id && s.id !== originalId)) {
+      setError(t("form.validate.idDup", { id }));
+      return;
+    }
+    if (!values.baseUrl.trim()) {
+      setError(t("form.validate.baseUrlRequired"));
+      return;
+    }
+    if (!values.envKey.trim()) {
+      setError(t("form.validate.envKeyRequired"));
+      return;
+    }
+    if (!values.defaultModel.trim()) {
+      setError(t("form.validate.defaultModelRequired"));
+      return;
+    }
+    const next = formValuesToSpec(values);
     const merged =
       editing.mode === "create"
         ? [...data.specs, next]
@@ -163,181 +207,226 @@ export function Providers() {
     await save(merged);
   }
 
-  async function remove(id: string) {
-    if (!data) return;
-    if (!confirm(`删除 provider "${id}"？`)) return;
-    await save(data.specs.filter((s) => s.id !== id));
-  }
-
   async function commitRawJson() {
     if (rawEditor == null) return;
     let parsed: unknown;
     try {
       parsed = JSON.parse(rawEditor);
     } catch (err) {
-      setError(`JSON 解析失败：${(err as Error).message}`);
+      setError(t("rawJson.parseError", { message: (err as Error).message }));
       return;
     }
     if (typeof parsed !== "object" || parsed === null) {
-      setError("JSON 必须是对象");
+      setError(t("rawJson.notObject"));
       return;
     }
     const obj = parsed as { providers?: unknown };
     if (!Array.isArray(obj.providers)) {
-      setError("JSON 顶层必须包含 providers 数组");
+      setError(t("rawJson.missingProviders"));
       return;
     }
     setRawEditor(null);
     await save(obj.providers as GenericProviderSpec[]);
   }
 
+  const columns: ColumnsType<GenericProviderSpec> = useMemo(
+    () => [
+      {
+        title: t("table.columns.id"),
+        dataIndex: "id",
+        key: "id",
+        render: (id: string, row) => (
+          <Space>
+            <strong>
+              <code>{id}</code>
+            </strong>
+            {row.shortcut && row.shortcut !== row.id && (
+              <Tag>{t("table.shortcutTag", { value: row.shortcut })}</Tag>
+            )}
+          </Space>
+        ),
+      },
+      {
+        title: t("table.columns.displayName"),
+        key: "displayName",
+        render: (_, row) => row.displayName ?? row.id,
+      },
+      {
+        title: t("table.columns.baseUrl"),
+        dataIndex: "baseUrl",
+        key: "baseUrl",
+        render: (v: string) => <code style={{ fontSize: 11 }}>{v}</code>,
+      },
+      {
+        title: t("table.columns.defaultModel"),
+        dataIndex: "defaultModel",
+        key: "defaultModel",
+        render: (v: string) => <code>{v}</code>,
+      },
+      {
+        title: t("table.columns.wireApi"),
+        dataIndex: "wireApi",
+        key: "wireApi",
+        render: (v: GenericProviderSpec["wireApi"]) => (
+          <Tag color={v === "responses" ? "success" : "default"}>{v ?? "chat"}</Tag>
+        ),
+      },
+      {
+        title: t("table.columns.models"),
+        key: "models",
+        render: (_, row) =>
+          row.models && row.models.length > 0 ? (
+            <Tag>{t("table.modelCountTag", { count: row.models.length })}</Tag>
+          ) : (
+            <Tag>{t("table.passthroughTag")}</Tag>
+          ),
+      },
+      {
+        title: t("table.columns.ops"),
+        key: "ops",
+        align: "right",
+        width: 200,
+        render: (_, row) => (
+          <Space>
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => startEdit(row)}
+              disabled={!data?.editable}
+            >
+              {t("action.edit")}
+            </Button>
+            <Button
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={() => void remove(row.id)}
+              disabled={!data?.editable}
+            >
+              {t("action.delete")}
+            </Button>
+          </Space>
+        ),
+      },
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [t, data?.editable]
+  );
+
   return (
-    <div>
-      <h2>通用 Provider</h2>
-      <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>
-        在这里管理 <code>providers.json</code> 里的通用 OpenAI 兼容 / Responses 直透 provider。
-        修改后需要 <strong>重启 mimo2codex</strong> 让运行时 registry 加载新配置。
-        详细字段说明见{" "}
-        <a href="https://github.com/7as0nch/mimo2codex/blob/main/doc/generic-providers.zh.md" target="_blank" rel="noreferrer">
-          generic-providers 文档
-        </a>
-        。
-      </p>
+    <>
+      {msgCtx}
+      {modalCtx}
+      <Typography.Title level={2} style={{ marginTop: 0 }}>
+        {t("title")}
+      </Typography.Title>
+      <Typography.Paragraph type="secondary">
+        <Trans i18nKey="intro" ns="providers">
+          {"placeholder"}
+          <a
+            href="https://github.com/7as0nch/mimo2codex/blob/main/doc/generic-providers.zh.md"
+            target="_blank"
+            rel="noreferrer"
+          >
+            placeholder
+          </a>
+          {"placeholder"}
+        </Trans>
+      </Typography.Paragraph>
 
       {error && (
-        <div className="banner err">
-          <span className="ic">!</span>
-          <div className="body">{error}</div>
-        </div>
+        <Alert
+          type="error"
+          showIcon
+          message={error}
+          closable
+          onClose={() => setError(null)}
+          style={{ marginBottom: 16 }}
+        />
       )}
       {success && (
-        <div className="banner warn">
-          <span className="ic">⟳</span>
-          <div className="body">{success}</div>
-        </div>
+        <Alert
+          type="warning"
+          showIcon
+          message={success}
+          closable
+          onClose={() => setSuccess(null)}
+          style={{ marginBottom: 16 }}
+        />
       )}
 
       {data && (
         <>
-          <div className="banner info">
-            <span className="ic">i</span>
-            <div className="body">
-              <div>
-                <strong>文件位置：</strong>
-                <code>{data.path ?? "(unavailable)"}</code>{" "}
-                {data.source === "explicit" && (
-                  <span className="tag">通过 MIMO2CODEX_PROVIDERS_FILE 指定</span>
-                )}
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={
+              <Space wrap>
+                <strong>{t("file.title")}:</strong>
+                <code>{data.path ?? "(unavailable)"}</code>
+                {data.source === "explicit" && <Tag>{t("file.explicit")}</Tag>}
                 {!data.exists && data.path && (
-                  <span className="tag warn">尚未创建——保存后自动新建</span>
+                  <Tag color="warning">{t("file.notCreated")}</Tag>
                 )}
                 {!data.editable && (
-                  <span className="tag err">不可编辑：{data.notice}</span>
+                  <Tag color="error">
+                    {t("file.notEditable", { notice: data.notice ?? "" })}
+                  </Tag>
                 )}
-              </div>
-              {data.error && (
-                <div style={{ marginTop: 8, color: "var(--err)" }}>
-                  当前文件有问题：{data.error}（仍可在 UI 里重写覆盖）
+              </Space>
+            }
+            description={
+              data.error ? (
+                <div style={{ marginTop: 8 }}>
+                  {t("file.currentError", { error: data.error })}
                 </div>
-              )}
-            </div>
-          </div>
+              ) : undefined
+            }
+          />
 
-          <div className="row" style={{ marginBottom: 12 }}>
-            <button onClick={startCreate} disabled={!data.editable}>
-              + 添加 Provider
-            </button>
-            <button
-              className="secondary"
-              onClick={() =>
-                setRawEditor(JSON.stringify({ providers: data.specs }, null, 2))
-              }
-              disabled={!data.editable}
-            >
-              编辑原始 JSON
-            </button>
-            <button className="secondary" onClick={() => void load()}>
-              刷新
-            </button>
-          </div>
+          <Card>
+            <Space style={{ marginBottom: 16 }}>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={startCreate}
+                disabled={!data.editable}
+              >
+                {t("action.create")}
+              </Button>
+              <Button
+                icon={<CodeOutlined />}
+                onClick={() =>
+                  setRawEditor(JSON.stringify({ providers: data.specs }, null, 2))
+                }
+                disabled={!data.editable}
+              >
+                {t("action.rawJson")}
+              </Button>
+              <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+                {t("action.refresh")}
+              </Button>
+            </Space>
 
-          {data.specs.length === 0 ? (
-            <div className="empty">
-              还没有通用 provider。点击「+ 添加 Provider」开始。
-            </div>
-          ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>显示名</th>
-                  <th>baseUrl</th>
-                  <th>默认模型</th>
-                  <th>wireApi</th>
-                  <th>声明模型</th>
-                  <th style={{ textAlign: "right" }}>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.specs.map((s) => (
-                  <tr key={s.id}>
-                    <td>
-                      <strong className="mono">{s.id}</strong>
-                      {s.shortcut && s.shortcut !== s.id && (
-                        <>
-                          {" "}
-                          <span className="tag muted">短码 {s.shortcut}</span>
-                        </>
-                      )}
-                    </td>
-                    <td>{s.displayName ?? s.id}</td>
-                    <td className="mono" style={{ fontSize: 11 }}>
-                      {s.baseUrl}
-                    </td>
-                    <td className="mono">{s.defaultModel}</td>
-                    <td>
-                      <span className={`tag ${s.wireApi === "responses" ? "ok" : "muted"}`}>
-                        {s.wireApi ?? "chat"}
-                      </span>
-                    </td>
-                    <td>
-                      {s.models && s.models.length > 0 ? (
-                        <span className="tag">{s.models.length} 个</span>
-                      ) : (
-                        <span className="tag muted">任意透传</span>
-                      )}
-                    </td>
-                    <td style={{ textAlign: "right" }}>
-                      <button
-                        className="secondary"
-                        onClick={() => startEdit(s)}
-                        disabled={!data.editable}
-                      >
-                        编辑
-                      </button>{" "}
-                      <button
-                        className="danger"
-                        onClick={() => void remove(s.id)}
-                        disabled={!data.editable}
-                      >
-                        删除
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+            <Table<GenericProviderSpec>
+              rowKey="id"
+              dataSource={data.specs}
+              columns={columns}
+              pagination={false}
+              size="middle"
+              locale={{ emptyText: t("table.empty") }}
+            />
+          </Card>
         </>
       )}
 
       {editing && (
-        <FormModal
+        <ProviderFormModal
           mode={editing.mode}
-          form={editing.form}
-          setForm={(form) => setEditing({ ...editing, form } as typeof editing)}
-          onCancel={cancelEdit}
-          onSubmit={() => void commitForm()}
+          initialValues={editing.values}
+          onCancel={() => setEditing(null)}
+          onSubmit={commitForm}
         />
       )}
 
@@ -349,282 +438,257 @@ export function Providers() {
           onSubmit={() => void commitRawJson()}
         />
       )}
-    </div>
+    </>
   );
 }
 
-function FormModal({
+function ProviderFormModal({
   mode,
-  form,
-  setForm,
+  initialValues,
   onCancel,
   onSubmit,
 }: {
   mode: "create" | "edit";
-  form: FormState;
-  setForm: (f: FormState) => void;
+  initialValues: FormValues;
   onCancel: () => void;
-  onSubmit: () => void;
+  onSubmit: (values: FormValues) => Promise<void>;
 }) {
-  function update<K extends keyof FormState>(key: K, value: FormState[K]) {
-    setForm({ ...form, [key]: value });
-  }
-  function updateModel(idx: number, patch: Partial<GenericProviderModelSpec>) {
-    const next = (form.models ?? []).map((m, i) => (i === idx ? { ...m, ...patch } : m));
-    update("models", next);
-  }
-  function addModel() {
-    update("models", [...(form.models ?? []), { id: "" }]);
-  }
-  function removeModel(idx: number) {
-    update(
-      "models",
-      (form.models ?? []).filter((_, i) => i !== idx)
-    );
-  }
+  const { t } = useTranslation("providers");
+  const { t: tCommon } = useTranslation("common");
+  const [form] = Form.useForm<FormValues>();
+
+  const title =
+    mode === "create"
+      ? t("form.titleCreate")
+      : t("form.titleEdit", { name: initialValues.id || "Provider" });
 
   return (
-    <ModalShell
-      title={mode === "create" ? "添加 Provider" : `编辑 ${form.id || "Provider"}`}
+    <Modal
+      open
+      width={760}
+      title={title}
       onCancel={onCancel}
-      footer={<ModalFooter onCancel={onCancel} onSubmit={onSubmit} submitLabel="保存" />}
+      okText={tCommon("save")}
+      cancelText={tCommon("cancel")}
+      onOk={async () => {
+        const values = await form.validateFields();
+        await onSubmit(values);
+      }}
+      destroyOnClose
     >
-      <FormField label="ID" required>
-        <input
-          value={form.id}
-          onChange={(e) => update("id", e.target.value)}
-          placeholder="qwen / kimi / my-vllm"
-          disabled={mode === "edit"}
-        />
-        <div className="hint">仅字母数字 / - / _，不能与内置 mimo / deepseek 冲突</div>
-      </FormField>
+      <Form<FormValues>
+        form={form}
+        layout="vertical"
+        initialValues={initialValues}
+        preserve={false}
+      >
+        <Form.Item
+          name="id"
+          label={t("form.fields.id")}
+          rules={[{ required: true, message: t("form.validate.idRequired") }]}
+          extra={t("form.fields.idHint")}
+        >
+          <Input
+            placeholder={t("form.fields.idPlaceholder")}
+            disabled={mode === "edit"}
+          />
+        </Form.Item>
 
-      <FormField label="显示名">
-        <input
-          value={form.displayName ?? ""}
-          onChange={(e) => update("displayName", e.target.value)}
-          placeholder="留空则用 id"
-        />
-      </FormField>
+        <Form.Item name="displayName" label={t("form.fields.displayName")}>
+          <Input placeholder={t("form.fields.displayNamePlaceholder")} />
+        </Form.Item>
 
-      <FormField label="shortcut">
-        <input
-          value={form.shortcut ?? ""}
-          onChange={(e) => update("shortcut", e.target.value)}
-          placeholder="留空则用 id"
-        />
-        <div className="hint">
-          CLI 启动时用 <code>--model &lt;shortcut&gt;</code> 切换默认 provider
-        </div>
-      </FormField>
+        <Form.Item
+          name="shortcut"
+          label={t("form.fields.shortcut")}
+          extra={t("form.fields.shortcutHint")}
+        >
+          <Input placeholder={t("form.fields.shortcutPlaceholder")} />
+        </Form.Item>
 
-      <FormField label="baseUrl" required>
-        <input
-          value={form.baseUrl}
-          onChange={(e) => update("baseUrl", e.target.value)}
-          placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
-        />
-        <div className="hint">
-          上游 base URL；<strong>不要</strong>带 <code>/chat/completions</code> 后缀
-        </div>
-      </FormField>
+        <Form.Item
+          name="baseUrl"
+          label={t("form.fields.baseUrl")}
+          rules={[
+            { required: true, message: t("form.validate.baseUrlRequired") },
+          ]}
+          extra={
+            <Trans i18nKey="form.fields.baseUrlHint" ns="providers">
+              {"placeholder"}
+            </Trans>
+          }
+        >
+          <Input placeholder={t("form.fields.baseUrlPlaceholder")} />
+        </Form.Item>
 
-      <FormField label="envKey" required>
-        <input
-          value={form.envKey}
-          onChange={(e) => update("envKey", e.target.value)}
-          placeholder="QWEN_API_KEY"
-        />
-        <div className="hint">从哪个环境变量读取 API key</div>
-      </FormField>
+        <Form.Item
+          name="envKey"
+          label={t("form.fields.envKey")}
+          rules={[
+            { required: true, message: t("form.validate.envKeyRequired") },
+          ]}
+          extra={t("form.fields.envKeyHint")}
+        >
+          <Input placeholder={t("form.fields.envKeyPlaceholder")} />
+        </Form.Item>
 
-      <FormField label="defaultModel" required>
-        <input
-          value={form.defaultModel}
-          onChange={(e) => update("defaultModel", e.target.value)}
-          placeholder="qwen3-max"
-        />
-      </FormField>
+        <Form.Item
+          name="defaultModel"
+          label={t("form.fields.defaultModel")}
+          rules={[
+            {
+              required: true,
+              message: t("form.validate.defaultModelRequired"),
+            },
+          ]}
+        >
+          <Input placeholder={t("form.fields.defaultModelPlaceholder")} />
+        </Form.Item>
 
-      <FormField label="wireApi">
-        <div className="form-options">
-          <label
-            className={`opt ${form.wireApiDisplay === "chat" ? "checked" : ""}`}
-            onClick={() => update("wireApiDisplay", "chat")}
-          >
-            <input
-              type="radio"
-              name="wireApi"
-              checked={form.wireApiDisplay === "chat"}
-              onChange={() => update("wireApiDisplay", "chat")}
-            />
-            <div>
-              <div className="opt-title">chat</div>
-              <div className="opt-sub">默认 · 翻译为 Chat Completions</div>
-            </div>
-          </label>
-          <label
-            className={`opt ${form.wireApiDisplay === "responses" ? "checked" : ""}`}
-            onClick={() => update("wireApiDisplay", "responses")}
-          >
-            <input
-              type="radio"
-              name="wireApi"
-              checked={form.wireApiDisplay === "responses"}
-              onChange={() => update("wireApiDisplay", "responses")}
-            />
-            <div>
-              <div className="opt-title">responses</div>
-              <div className="opt-sub">直透 · 不做协议翻译</div>
-            </div>
-          </label>
-        </div>
-      </FormField>
+        <Form.Item name="wireApiDisplay" label={t("form.fields.wireApi")}>
+          <Radio.Group>
+            <Radio.Button value="chat">
+              <Space direction="vertical" size={0} style={{ alignItems: "flex-start" }}>
+                <strong>{t("form.fields.wireApiChat")}</strong>
+                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                  {t("form.fields.wireApiChatSub")}
+                </Typography.Text>
+              </Space>
+            </Radio.Button>
+            <Radio.Button value="responses">
+              <Space direction="vertical" size={0} style={{ alignItems: "flex-start" }}>
+                <strong>{t("form.fields.wireApiResponses")}</strong>
+                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                  {t("form.fields.wireApiResponsesSub")}
+                </Typography.Text>
+              </Space>
+            </Radio.Button>
+          </Radio.Group>
+        </Form.Item>
 
-      <FormField label="features">
-        <div className="form-options">
-          <label
-            className={`opt ${form.features?.forceParallelToolCalls ? "checked" : ""}`}
-          >
-            <input
-              type="checkbox"
-              checked={!!form.features?.forceParallelToolCalls}
-              onChange={(e) =>
-                update("features", {
-                  ...form.features,
-                  forceParallelToolCalls: e.target.checked,
-                })
-              }
-            />
-            <div>
-              <div className="opt-title">forceParallelToolCalls</div>
-              <div className="opt-sub">一回合多个工具调用，缓解 agentic 编程</div>
-            </div>
-          </label>
-          <label className={`opt ${form.features?.webSearch ? "checked" : ""}`}>
-            <input
-              type="checkbox"
-              checked={!!form.features?.webSearch}
-              onChange={(e) =>
-                update("features", {
-                  ...form.features,
-                  webSearch: e.target.checked,
-                })
-              }
-            />
-            <div>
-              <div className="opt-title">webSearch</div>
-              <div className="opt-sub">仅对支持 builtin web_search 的上游有意义</div>
-            </div>
-          </label>
-        </div>
-      </FormField>
+        <Form.Item label={t("form.fields.features")}>
+          <Space direction="vertical">
+            <Form.Item
+              name="forceParallelToolCalls"
+              valuePropName="checked"
+              noStyle
+            >
+              <Checkbox>
+                <strong>{t("form.fields.forceParallelToolCalls")}</strong>{" "}
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  · {t("form.fields.forceParallelToolCallsSub")}
+                </Typography.Text>
+              </Checkbox>
+            </Form.Item>
+            <Form.Item name="featWebSearch" valuePropName="checked" noStyle>
+              <Checkbox>
+                <strong>{t("form.fields.webSearch")}</strong>{" "}
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  · {t("form.fields.webSearchSub")}
+                </Typography.Text>
+              </Checkbox>
+            </Form.Item>
+          </Space>
+        </Form.Item>
 
-      <FormField label="docsUrl">
-        <input
-          value={form.docsUrl ?? ""}
-          onChange={(e) => update("docsUrl", e.target.value)}
-          placeholder="https://..."
-        />
-        <div className="hint">可选——缺 key 错误提示里的获取链接</div>
-      </FormField>
+        <Form.Item
+          name="docsUrl"
+          label={t("form.fields.docsUrl")}
+          extra={t("form.fields.docsUrlHint")}
+        >
+          <Input placeholder="https://..." />
+        </Form.Item>
 
-      <div className="form-section">
-        <h4>声明模型（可选）</h4>
-        <p className="section-hint">
-          不填则<strong>任意透传</strong>——客户端发什么 model id 就转发什么。
-          填了的话只有列在这里的 id（含别名）才会被 byClientModel 路由到此 provider；
-          声明 contextWindow / maxOutputTokens 能让 <code>print-config</code> 输出正确的 toml 字段。
-        </p>
-        {(form.models ?? []).map((m, idx) => (
-          <div key={idx} className="model-card">
-            <div className="grid">
-              <input
-                placeholder="model id（必填，如 qwen3-max）"
-                value={m.id}
-                onChange={(e) => updateModel(idx, { id: e.target.value })}
-              />
-              <input
-                type="number"
-                placeholder="contextWindow"
-                value={m.contextWindow ?? ""}
-                onChange={(e) =>
-                  updateModel(idx, {
-                    contextWindow: e.target.value ? Number(e.target.value) : undefined,
-                  })
+        <Typography.Title level={5}>{t("form.models.title")}</Typography.Title>
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+          <Trans i18nKey="form.models.hint" ns="providers">
+            {"placeholder"}
+          </Trans>
+        </Typography.Paragraph>
+
+        <Form.List name="models">
+          {(fields, { add, remove }) => (
+            <>
+              {fields.map((field) => (
+                <Card
+                  key={field.key}
+                  size="small"
+                  style={{ marginBottom: 12 }}
+                  styles={{ body: { padding: 12 } }}
+                  extra={
+                    <Button
+                      type="text"
+                      danger
+                      icon={<MinusCircleOutlined />}
+                      onClick={() => remove(field.name)}
+                    />
+                  }
+                >
+                  <Form.Item
+                    {...field}
+                    label="model id"
+                    name={[field.name, "id"]}
+                    rules={[{ required: true }]}
+                    style={{ marginBottom: 8 }}
+                  >
+                    <Input placeholder={t("form.models.idPlaceholder")} />
+                  </Form.Item>
+                  <Space wrap>
+                    <Form.Item
+                      name={[field.name, "contextWindow"]}
+                      label={t("form.models.contextPlaceholder")}
+                      style={{ marginBottom: 8 }}
+                    >
+                      <InputNumber min={1} placeholder="262144" />
+                    </Form.Item>
+                    <Form.Item
+                      name={[field.name, "maxOutputTokens"]}
+                      label={t("form.models.maxOutputPlaceholder")}
+                      style={{ marginBottom: 8 }}
+                    >
+                      <InputNumber min={1} placeholder="8192" />
+                    </Form.Item>
+                  </Space>
+                  <Space>
+                    <Form.Item
+                      name={[field.name, "supportsImages"]}
+                      valuePropName="checked"
+                      noStyle
+                    >
+                      <Checkbox>{t("form.models.vision")}</Checkbox>
+                    </Form.Item>
+                    <Form.Item
+                      name={[field.name, "supportsReasoning"]}
+                      valuePropName="checked"
+                      noStyle
+                    >
+                      <Checkbox>{t("form.models.reasoning")}</Checkbox>
+                    </Form.Item>
+                    <Form.Item
+                      name={[field.name, "supportsWebSearch"]}
+                      valuePropName="checked"
+                      noStyle
+                    >
+                      <Checkbox>{t("form.models.webSearch")}</Checkbox>
+                    </Form.Item>
+                  </Space>
+                </Card>
+              ))}
+              <Button
+                type="dashed"
+                icon={<PlusOutlined />}
+                onClick={() =>
+                  add({ id: "" } as Partial<GenericProviderModelSpec>)
                 }
-              />
-              <input
-                type="number"
-                placeholder="maxOutputTokens"
-                value={m.maxOutputTokens ?? ""}
-                onChange={(e) =>
-                  updateModel(idx, {
-                    maxOutputTokens: e.target.value ? Number(e.target.value) : undefined,
-                  })
-                }
-              />
-              <button
-                className="danger"
-                onClick={() => removeModel(idx)}
-                style={{ padding: "6px 10px" }}
+                block
               >
-                删除
-              </button>
-            </div>
-            <div className="meta">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={!!m.supportsImages}
-                  onChange={(e) => updateModel(idx, { supportsImages: e.target.checked })}
-                />
-                vision
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={!!m.supportsReasoning}
-                  onChange={(e) => updateModel(idx, { supportsReasoning: e.target.checked })}
-                />
-                reasoning
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={!!m.supportsWebSearch}
-                  onChange={(e) => updateModel(idx, { supportsWebSearch: e.target.checked })}
-                />
-                web search
-              </label>
-            </div>
-          </div>
-        ))}
-        <button className="secondary" onClick={addModel}>
-          + 添加模型
-        </button>
-      </div>
-    </ModalShell>
-  );
-}
-
-function FormField({
-  label,
-  required,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="form-field">
-      <label>
-        {label}
-        {required && <span className="req">*</span>}
-      </label>
-      {children}
-    </div>
+                {t("form.models.addBtn")}
+              </Button>
+            </>
+          )}
+        </Form.List>
+      </Form>
+    </Modal>
   );
 }
 
@@ -639,6 +703,9 @@ function RawJsonModal({
   onCancel: () => void;
   onSubmit: () => void;
 }) {
+  const { t } = useTranslation("providers");
+  const { t: tCommon } = useTranslation("common");
+
   const valid = useMemo(() => {
     try {
       JSON.parse(value);
@@ -649,93 +716,32 @@ function RawJsonModal({
   }, [value]);
 
   return (
-    <ModalShell
-      title="原始 JSON 编辑"
+    <Modal
+      open
+      width={760}
+      title={t("rawJson.title")}
       onCancel={onCancel}
-      footer={
-        <ModalFooter
-          onCancel={onCancel}
-          onSubmit={onSubmit}
-          submitLabel="保存"
-          submitDisabled={!valid}
-        />
-      }
+      onOk={onSubmit}
+      okText={tCommon("save")}
+      cancelText={tCommon("cancel")}
+      okButtonProps={{ disabled: !valid }}
     >
-      <p style={{ color: "var(--muted)", fontSize: 12, marginTop: 0 }}>
-        直接编辑 <code>providers.json</code> 全文。校验失败时保存按钮会禁用。
-      </p>
-      <textarea
-        className="code"
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 0 }}>
+        {t("rawJson.hint")}
+      </Typography.Paragraph>
+      <Input.TextArea
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        style={{
-          width: "100%",
-          background: "var(--panel-2)",
-          color: "var(--fg)",
-          border: `1px solid ${valid ? "var(--border)" : "var(--err)"}`,
-          borderRadius: 6,
-          padding: 12,
-        }}
+        rows={20}
+        status={valid ? "" : "error"}
+        style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
       />
-      <div
-        style={{
-          fontSize: 11,
-          color: valid ? "var(--ok)" : "var(--err)",
-          marginTop: 6,
-        }}
+      <Typography.Text
+        type={valid ? "success" : "danger"}
+        style={{ fontSize: 11, marginTop: 6, display: "block" }}
       >
-        {valid ? "✓ JSON 语法正确" : "✗ JSON 语法错误"}
-      </div>
-    </ModalShell>
-  );
-}
-
-function ModalShell({
-  title,
-  onCancel,
-  children,
-  footer,
-}: {
-  title: string;
-  onCancel: () => void;
-  children: React.ReactNode;
-  footer?: React.ReactNode;
-}) {
-  return (
-    <div className="modal-overlay" onClick={onCancel}>
-      <div className="modal-window" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3>{title}</h3>
-          <button className="close" onClick={onCancel} aria-label="关闭">
-            ×
-          </button>
-        </div>
-        <div className="modal-body">{children}</div>
-        {footer && <div className="modal-footer">{footer}</div>}
-      </div>
-    </div>
-  );
-}
-
-function ModalFooter({
-  onCancel,
-  onSubmit,
-  submitLabel,
-  submitDisabled,
-}: {
-  onCancel: () => void;
-  onSubmit: () => void;
-  submitLabel: string;
-  submitDisabled?: boolean;
-}) {
-  return (
-    <>
-      <button className="secondary" onClick={onCancel}>
-        取消
-      </button>
-      <button onClick={onSubmit} disabled={submitDisabled}>
-        {submitLabel}
-      </button>
-    </>
+        {valid ? t("rawJson.valid") : t("rawJson.invalid")}
+      </Typography.Text>
+    </Modal>
   );
 }
