@@ -1,5 +1,6 @@
 {
-  "title": "Models",
+  "title": "Built-in Models",
+  "subtitle": "Manage custom additions and deprecation dates for mimo and deepseek. Generic provider models are edited inside the Providers form.",
   "providerStatus": {
     "enabled": "Enabled",
     "missingKey": "No key configured"
@@ -12,7 +13,7 @@
       "capabilities": "Capabilities",
       "context": "Context",
       "source": "Source",
-      "deprecated": "Deprecated",
+      "deprecated": "Deprecated after",
       "ops": "Actions"
     },
     "capability": {
@@ -24,7 +25,11 @@
       "builtin": "builtin",
       "custom": "custom"
     },
-    "readonly": "read-only"
+    "readonly": "read-only",
+    "deprecated": {
+      "placeholder": "not set",
+      "saved": "Deprecation date saved"
+    }
   },
   "create": {
     "title": "Add a custom model",
@@ -32,17 +37,5 @@
     "displayNamePlaceholder": "display name (optional)",
     "submit": "Add"
   },
-  "deleteConfirm": "Delete this custom model?",
-  "alias": {
-    "title": "Aliases (client model field → upstream id)",
-    "empty": "No aliases yet",
-    "columns": {
-      "alias": "Alias",
-      "mapTo": "Maps to"
-    },
-    "namePlaceholder": "alias (model the client sends)",
-    "upstreamPlaceholder": "— choose upstream model —",
-    "submit": "Add",
-    "deleteConfirm": "Delete alias \"{{alias}}\"?"
-  }
+  "deleteConfirm": "Delete this custom model?"
 }

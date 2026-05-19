@@ -9,7 +9,7 @@
     "currentError": "当前文件有问题：{{error}}（仍可在 UI 里重写覆盖）"
   },
   "action": {
-    "create": "+ 添加 Provider",
+    "create": "添加 Provider",
     "rawJson": "编辑原始 JSON",
     "refresh": "刷新",
     "edit": "编辑",
@@ -28,7 +28,7 @@
     "shortcutTag": "短码 {{value}}",
     "modelCountTag": "{{count}} 个",
     "passthroughTag": "任意透传",
-    "empty": "还没有通用 provider。点击「+ 添加 Provider」开始。"
+    "empty": "还没有通用 provider。点击「添加 Provider」开始。"
   },
   "saved": {
     "withRestart": "已保存到 {{path}} — 重启 mimo2codex 让配置生效",
@@ -114,8 +114,10 @@
   "rawJson": {
     "title": "原始 JSON 编辑",
     "hint": "直接编辑 providers.json 全文。校验失败时保存按钮会禁用。",
-    "valid": "✓ JSON 语法正确",
-    "invalid": "✗ JSON 语法错误",
+    "valid": "JSON 语法正确",
+    "invalid": "JSON 语法错误",
+    "pasteBtn": "从剪贴板粘贴",
+    "pasteFailed": "无法读取剪贴板",
     "parseError": "JSON 解析失败：{{message}}",
     "notObject": "JSON 必须是对象",
     "missingProviders": "JSON 顶层必须包含 providers 数组"

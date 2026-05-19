@@ -1,0 +1,81 @@
+{
+  "openHelper": "操作指导",
+  "dashboard": {
+    "s1": {
+      "title": "统计窗口",
+      "desc": "切换近 24 小时 / 7 天 / 30 天的统计范围。下方所有指标和图表都会跟着刷新。"
+    },
+    "s2": {
+      "title": "核心指标",
+      "desc": "六个紧凑卡片：请求总数、错误数（含错误率）、Token 消耗、缓存命中率、延迟 P50（hover 看 P95/P99）、启用的 Provider + 健康状态 Tag。底部还会出现按 error_code 分类的错误标签。"
+    },
+    "s3": {
+      "title": "Token 消耗趋势",
+      "desc": "按模型拆分的多系列折线图。可切换「按小时」或「按日」粒度，点击图例隐藏单个系列。"
+    },
+    "s4": {
+      "title": "最近 10 条请求",
+      "desc": "点击任意行直接跳转到日志页并自动展开该条详情，方便快速排查最近的请求。"
+    }
+  },
+  "codex": {
+    "s1": {
+      "title": "当前状态",
+      "desc": "显示 Codex 的 auth.json / config.toml 当前归属（mimo2codex 写入 / 外部 / 未创建）+ 当前运行时覆盖。是判断「我现在到底走的哪个 provider」的第一站。"
+    },
+    "s2": {
+      "title": "先决条件 / 配置片段",
+      "desc": "首次接入展开这里：选好 provider 后会自动生成 auth.json / config.toml / cc-switch 三种方式的可粘贴片段。"
+    },
+    "s3": {
+      "title": "三个 Tab",
+      "desc": "Targets：选 provider × model 写文件或仅运行时覆盖；Thinking & Override：全局开关思考模式 + 当前 override；Backups：每次写文件自动产生的备份历史，可一键恢复。"
+    },
+    "s4": {
+      "title": "一键探测全部",
+      "desc": "对所有已配置 key 的 provider 默认模型并发 probe，几秒内看出哪条链路通、延迟多少。"
+    }
+  },
+  "providers": {
+    "s1": {
+      "title": "添加 Provider",
+      "desc": "支持任意 OpenAI / Responses 兼容上游。预设按钮可一键套用 SenseNova / MiniMax / Kimi 的推荐 sanitizer 组合，无需手动勾 11 个开关。"
+    },
+    "s2": {
+      "title": "编辑原始 JSON",
+      "desc": "高级路径：直接编辑 providers.json 全文。校验失败会内联报错，OK 按钮自动禁用直到 JSON 合法。"
+    },
+    "s3": {
+      "title": "Provider 列表",
+      "desc": "点行尾的编辑修改 baseUrl / envKey / 模型列表 / sanitizer 子开关。改完保存会自动重启注册表。"
+    }
+  },
+  "models": {
+    "s1": {
+      "title": "切换内置 Provider",
+      "desc": "本页面只管 mimo / deepseek 两个内置 provider 的模型目录。通用 Provider 的模型在「通用 Provider」表单内维护。"
+    },
+    "s2": {
+      "title": "模型列表",
+      "desc": "内置（builtin）行只读；自定义（custom）行可直接在「过期日」列内联编辑 DatePicker，给老模型打废弃标记。"
+    },
+    "s3": {
+      "title": "添加自定义模型",
+      "desc": "在卡片底部直接录入 upstream_id 和显示名即可。例如 mimo 出新型号还没 seed 到 builtin 时，这里手工补一行就能用。"
+    }
+  },
+  "logs": {
+    "s1": {
+      "title": "服务端过滤",
+      "desc": "Provider 下拉是动态加载的；模型名是 LIKE 模糊搜索；状态按 2xx / 4xx+ 分组。所有过滤都走后端，分页准确。"
+    },
+    "s2": {
+      "title": "导出 / 清理",
+      "desc": "导出 CSV 把当前过滤结果存盘；清理旧日志会展示具体截止日期，避免一不小心删错范围。"
+    },
+    "s3": {
+      "title": "详情展开",
+      "desc": "点行展开后默认是「结构化」视图：解析后的 messages / tools / completion + token 摘要。切到「原始 JSON」可看完整 body。"
+    }
+  }
+}

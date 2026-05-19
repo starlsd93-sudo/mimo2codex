@@ -114,8 +114,10 @@
   "rawJson": {
     "title": "Edit raw JSON",
     "hint": "Edit providers.json verbatim. Save is disabled while JSON is invalid.",
-    "valid": "✓ valid JSON",
-    "invalid": "✗ invalid JSON",
+    "valid": "Valid JSON",
+    "invalid": "Invalid JSON",
+    "pasteBtn": "Paste from clipboard",
+    "pasteFailed": "Cannot read clipboard",
     "parseError": "JSON parse failed: {{message}}",
     "notObject": "JSON must be an object",
     "missingProviders": "JSON must have a top-level 'providers' array"

@@ -1,6 +1,6 @@
 {
   "title": "概览",
-  "setupBanner": "第一次用？看「<1>对接指引</1>」页面 — 一键拿到把 Codex 接到 mimo2codex 的配置片段（含 auth.json + config.toml）。",
+  "setupBanner": "第一次用？看「<1>Codex 接入</1>」页面 — 展开顶部「先决条件」就能拿到把 Codex 接到 mimo2codex 的配置片段（含 auth.json + config.toml）。",
   "range": {
     "label": "统计窗口",
     "options": {
@@ -25,7 +25,26 @@
     "providers": {
       "label": "已启用 Provider",
       "subEmpty": "无"
+    },
+    "cache": {
+      "label": "缓存命中率",
+      "sub": "命中 {{cached}} / 提示 {{prompt}}",
+      "subEmpty": "该窗口内暂无 prompt 数据"
+    },
+    "latency": {
+      "label": "延迟 P50",
+      "sub": "avg {{avg}}ms · P95 {{p95}}ms · P99 {{p99}}ms",
+      "subEmpty": "该窗口内暂无请求"
+    },
+    "health": {
+      "label": "Provider 健康状态（近 1h）",
+      "empty": "近 1h 无请求",
+      "tip": "{{requests}} 请求 / {{errors}} 错误（错误率 {{rate}}%）",
+      "idleTip": "近 1h 该 provider 无请求"
     }
+  },
+  "errors": {
+    "title": "错误分类（按 error_code 聚合）"
   },
   "chart": {
     "title": "Token 消耗趋势",
@@ -62,17 +81,6 @@
       "total": "合计"
     },
     "empty": "该窗口内暂无请求记录"
-  },
-  "mappings": {
-    "title": "模型映射记录",
-    "columns": {
-      "provider": "Provider",
-      "clientModel": "客户端发的 model",
-      "upstreamModel": "实际上游 model",
-      "count": "命中次数",
-      "lastSeen": "最近一次"
-    },
-    "empty": "尚无映射记录（发送一次请求即可）"
   },
   "recent": {
     "title": "最近 10 条请求",

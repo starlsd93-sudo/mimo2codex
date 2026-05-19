@@ -1,6 +1,15 @@
 {
-  "title": "Codex 启用",
+  "title": "Codex 接入",
   "intro": "在这里一键切换 Codex 实际调用的模型，替代 ccswitch。提供两种机制：",
+  "prereq": {
+    "title": "先决条件 / 手动配置片段",
+    "subtitle": "auth.json / config.toml / 环境变量 / cc-switch — 点击展开查看"
+  },
+  "tabs": {
+    "targets": "可启用模型",
+    "thinking": "思考与运行时覆盖",
+    "backups": "备份与恢复"
+  },
   "modesInfo": {
     "applyFile": "<1>写入文件并启用</1>：物理写入 ~/.codex/auth.json 和 ~/.codex/config.toml，与 ccswitch 行为一致。<3>需要重启 Codex</3> 才能生效。原文件会被自动备份，可一键恢复。",
     "runtimeOverride": "<1>仅运行时覆盖</1>：把激活的 (provider, model) 存到 mimo2codex 内部，selectProvider 路由时优先用它。<3>无需重启 Codex</3>，但要求 Codex 已经能连到 mimo2codex（即首次接入仍需用上面那种方式）。"
@@ -47,6 +56,9 @@
     "title": "可启用组合",
     "externalWarn": "当前 ~/.codex/auth.json 不是 mimo2codex 写入的（可能是真 OpenAI 登录或其他工具）。点「写入文件并启用」会先自动备份再覆盖，恢复随时可做。",
     "empty": "没有可启用的模型组合。",
+    "testAll": "一键探测全部",
+    "testAllBusy": "探测中…",
+    "testAllHint": "对所有已配置 key 的 provider 默认模型发起 probe 请求",
     "hasKey": "已配置 key",
     "missingKey": "未检测到 key",
     "columns": {

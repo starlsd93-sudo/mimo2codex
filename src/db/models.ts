@@ -15,12 +15,6 @@ export interface ModelRow {
   sort_order: number;
 }
 
-export interface AliasRow {
-  alias: string;
-  provider_id: string;
-  upstream_id: string;
-}
-
 export function listModels(providerId?: ProviderId): ModelRow[] {
   if (providerId) {
     return getDb()
@@ -134,34 +128,3 @@ export function deleteModel(id: number): boolean {
   return info.changes > 0;
 }
 
-export function listAliases(providerId?: ProviderId): AliasRow[] {
-  if (providerId) {
-    return getDb()
-      .prepare("SELECT * FROM model_aliases WHERE provider_id = ? ORDER BY alias")
-      .all(providerId) as AliasRow[];
-  }
-  return getDb().prepare("SELECT * FROM model_aliases ORDER BY provider_id, alias").all() as AliasRow[];
-}
-
-export function upsertAlias(input: AliasRow): void {
-  getDb()
-    .prepare(
-      `INSERT INTO model_aliases (alias, provider_id, upstream_id)
-       VALUES (@alias, @provider_id, @upstream_id)
-       ON CONFLICT(alias) DO UPDATE SET provider_id = excluded.provider_id, upstream_id = excluded.upstream_id`
-    )
-    .run(input);
-}
-
-export function deleteAlias(alias: string): boolean {
-  const info = getDb().prepare("DELETE FROM model_aliases WHERE alias = ?").run(alias);
-  return info.changes > 0;
-}
-
-export function lookupAlias(alias: string): AliasRow | null {
-  return (
-    (getDb().prepare("SELECT * FROM model_aliases WHERE alias = ?").get(alias) as
-      | AliasRow
-      | undefined) ?? null
-  );
-}

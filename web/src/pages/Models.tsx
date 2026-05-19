@@ -1,53 +1,61 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Alert,
   Button,
   Card,
-  Form,
+  DatePicker,
   Input,
   Modal,
   Segmented,
-  Select,
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
+  message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
   DeleteOutlined,
   PlusOutlined,
 } from "@ant-design/icons";
+import dayjs from "dayjs";
 import {
   api,
-  type AliasRow,
   type ModelRow,
   type ProviderInfo,
 } from "../api/client";
+import { PageTour } from "../components/PageTour";
+
+// Page is scoped to built-in providers — generic providers manage their
+// models through Providers Form's `models[]` list. Anything outside this set
+// is filtered out of the segmented switcher.
+const BUILTIN_PROVIDER_IDS = new Set(["mimo", "deepseek"]);
 
 export function Models() {
   const { t } = useTranslation("models");
+  const { t: tTour } = useTranslation("tour");
   const [modal, modalCtx] = Modal.useModal();
+  const segmentedRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
+  const addFormRef = useRef<HTMLDivElement>(null);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [active, setActive] = useState<string>("mimo");
   const [models, setModels] = useState<ModelRow[]>([]);
-  const [aliases, setAliases] = useState<AliasRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [newModel, setNewModel] = useState({ upstream_id: "", display_name: "" });
-  const [newAlias, setNewAlias] = useState({ alias: "", upstream_id: "" });
+  const [savingId, setSavingId] = useState<number | null>(null);
 
   async function load() {
     try {
       setError(null);
-      const [p, m, a] = await Promise.all([
+      const [p, m] = await Promise.all([
         api.providers(),
         api.modelsFor(active),
-        api.aliases(),
       ]);
       setProviders(p.providers);
       setModels(m.models);
-      setAliases(a.aliases);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -72,6 +80,12 @@ export function Models() {
   function removeModel(row: ModelRow) {
     modal.confirm({
       title: t("deleteConfirm"),
+      content: (
+        <div>
+          <code>{row.upstream_id}</code>
+          {row.display_name ? <span> ({row.display_name})</span> : null}
+        </div>
+      ),
       icon: <DeleteOutlined />,
       okButtonProps: { danger: true },
       onOk: async () => {
@@ -85,41 +99,19 @@ export function Models() {
     });
   }
 
-  async function addAlias() {
-    if (!newAlias.alias || !newAlias.upstream_id) return;
+  async function setDeprecatedDate(row: ModelRow, value: string | null) {
+    if (row.is_builtin) return;
+    setSavingId(row.id);
     try {
-      await api.upsertAlias({
-        alias: newAlias.alias,
-        provider_id: active,
-        upstream_id: newAlias.upstream_id,
-      });
-      setNewAlias({ alias: "", upstream_id: "" });
+      await api.patchModel(row.id, { deprecated_after: value });
       await load();
+      message.success(t("list.deprecated.saved"));
     } catch (err) {
       setError((err as Error).message);
+    } finally {
+      setSavingId(null);
     }
   }
-
-  function removeAlias(alias: string) {
-    modal.confirm({
-      title: t("alias.deleteConfirm", { alias }),
-      icon: <DeleteOutlined />,
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        try {
-          await api.deleteAlias(alias);
-          await load();
-        } catch (err) {
-          setError((err as Error).message);
-        }
-      },
-    });
-  }
-
-  const aliasesForActive = useMemo(
-    () => aliases.filter((a) => a.provider_id === active),
-    [aliases, active]
-  );
 
   const modelColumns: ColumnsType<ModelRow> = useMemo(
     () => [
@@ -171,8 +163,24 @@ export function Models() {
         title: t("list.columns.deprecated"),
         dataIndex: "deprecated_after",
         key: "deprecated_after",
-        render: (v: string | null) =>
-          v ? <Tag color="warning">{v}</Tag> : "—",
+        render: (v: string | null, row) => {
+          if (row.is_builtin) {
+            return v ? <Tag color="warning">{v}</Tag> : "—";
+          }
+          return (
+            <DatePicker
+              size="small"
+              value={v ? dayjs(v) : null}
+              disabled={savingId === row.id}
+              onChange={(d) =>
+                void setDeprecatedDate(row, d ? d.format("YYYY-MM-DD") : null)
+              }
+              placeholder={t("list.deprecated.placeholder")}
+              allowClear
+              style={{ width: 150 }}
+            />
+          );
+        },
       },
       {
         title: t("list.columns.ops"),
@@ -180,7 +188,9 @@ export function Models() {
         align: "right",
         render: (_, m) =>
           m.is_builtin ? (
-            <Tag>{t("list.readonly")}</Tag>
+            <Tooltip title={t("list.readonly")}>
+              <Tag>{t("list.readonly")}</Tag>
+            </Tooltip>
           ) : (
             <Button
               size="small"
@@ -194,46 +204,45 @@ export function Models() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t]
-  );
-
-  const aliasColumns: ColumnsType<AliasRow> = useMemo(
-    () => [
-      {
-        title: t("alias.columns.alias"),
-        dataIndex: "alias",
-        key: "alias",
-        render: (v: string) => <code>{v}</code>,
-      },
-      {
-        title: t("alias.columns.mapTo"),
-        dataIndex: "upstream_id",
-        key: "upstream_id",
-        render: (v: string) => <code>{v}</code>,
-      },
-      {
-        key: "ops",
-        align: "right",
-        render: (_, a) => (
-          <Button
-            size="small"
-            danger
-            icon={<DeleteOutlined />}
-            onClick={() => removeAlias(a.alias)}
-          />
-        ),
-      },
-    ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t]
+    [t, savingId]
   );
 
   return (
     <>
       {modalCtx}
-      <Typography.Title level={2} style={{ marginTop: 0 }}>
-        {t("title")}
-      </Typography.Title>
+      <Space
+        align="start"
+        style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }}
+        wrap
+      >
+        <div>
+          <Typography.Title level={2} style={{ margin: 0 }}>
+            {t("title")}
+          </Typography.Title>
+          <Typography.Text type="secondary">{t("subtitle")}</Typography.Text>
+        </div>
+        <div ref={segmentedRef}>
+          <Segmented<string>
+            value={active}
+            onChange={setActive}
+            options={providers
+              .filter((p) => BUILTIN_PROVIDER_IDS.has(p.id))
+              .map((p) => ({
+                value: p.id,
+                label: (
+                  <Space>
+                    {p.display_name}
+                    <Tag color={p.enabled ? "success" : "default"}>
+                      {p.enabled
+                        ? t("providerStatus.enabled")
+                        : t("providerStatus.missingKey")}
+                    </Tag>
+                  </Space>
+                ),
+              }))}
+          />
+        </div>
+      </Space>
 
       {error && (
         <Alert
@@ -242,111 +251,85 @@ export function Models() {
           message={error}
           closable
           onClose={() => setError(null)}
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 12 }}
         />
       )}
 
-      <Card style={{ marginBottom: 16 }}>
-        <Segmented<string>
-          value={active}
-          onChange={setActive}
-          options={providers.map((p) => ({
-            value: p.id,
-            label: (
-              <Space>
-                {p.display_name}
-                <Tag color={p.enabled ? "success" : "default"}>
-                  {p.enabled
-                    ? t("providerStatus.enabled")
-                    : t("providerStatus.missingKey")}
-                </Tag>
-              </Space>
-            ),
-          }))}
-        />
-      </Card>
-
-      <Card title={t("list.title")} style={{ marginBottom: 16 }}>
-        <Table<ModelRow>
-          rowKey="id"
-          dataSource={models}
-          columns={modelColumns}
-          pagination={false}
-          size="middle"
-        />
-      </Card>
-
-      <Card title={t("create.title")} style={{ marginBottom: 16 }}>
-        <Space wrap style={{ width: "100%" }}>
-          <Input
-            placeholder={t("create.upstreamPlaceholder")}
-            value={newModel.upstream_id}
-            onChange={(e) =>
-              setNewModel({ ...newModel, upstream_id: e.target.value })
-            }
-            style={{ width: 280 }}
+      <Card
+        title={t("list.title")}
+        styles={{ body: { padding: 0 } }}
+      >
+        <div ref={tableRef}>
+          <Table<ModelRow>
+            rowKey="id"
+            dataSource={models}
+            columns={modelColumns}
+            pagination={false}
+            size="middle"
           />
-          <Input
-            placeholder={t("create.displayNamePlaceholder")}
-            value={newModel.display_name}
-            onChange={(e) =>
-              setNewModel({ ...newModel, display_name: e.target.value })
-            }
-            style={{ width: 220 }}
-          />
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => void addModel()}
-            disabled={!newModel.upstream_id}
-          >
-            {t("create.submit")}
-          </Button>
-        </Space>
-      </Card>
-
-      <Card title={t("alias.title")}>
-        <Table<AliasRow>
-          rowKey="alias"
-          dataSource={aliasesForActive}
-          columns={aliasColumns}
-          pagination={false}
-          size="middle"
-          locale={{ emptyText: t("alias.empty") }}
-        />
-        <Form layout="inline" style={{ marginTop: 12 }} onFinish={() => void addAlias()}>
-          <Form.Item>
+        </div>
+        <div
+          ref={addFormRef}
+          style={{
+            padding: "12px 16px",
+            borderTop: "1px solid var(--ant-color-border-secondary, #eee)",
+          }}
+        >
+          <Space wrap>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t("create.title")}:
+            </Typography.Text>
             <Input
-              placeholder={t("alias.namePlaceholder")}
-              value={newAlias.alias}
-              onChange={(e) => setNewAlias({ ...newAlias, alias: e.target.value })}
+              size="small"
+              placeholder={t("create.upstreamPlaceholder")}
+              value={newModel.upstream_id}
+              onChange={(e) =>
+                setNewModel({ ...newModel, upstream_id: e.target.value })
+              }
               style={{ width: 240 }}
             />
-          </Form.Item>
-          <Form.Item>
-            <Select
-              placeholder={t("alias.upstreamPlaceholder")}
-              value={newAlias.upstream_id || undefined}
-              onChange={(v) => setNewAlias({ ...newAlias, upstream_id: v })}
-              style={{ width: 260 }}
-              options={models.map((m) => ({
-                value: m.upstream_id,
-                label: m.upstream_id,
-              }))}
+            <Input
+              size="small"
+              placeholder={t("create.displayNamePlaceholder")}
+              value={newModel.display_name}
+              onChange={(e) =>
+                setNewModel({ ...newModel, display_name: e.target.value })
+              }
+              style={{ width: 200 }}
             />
-          </Form.Item>
-          <Form.Item>
             <Button
+              size="small"
               type="primary"
-              htmlType="submit"
               icon={<PlusOutlined />}
-              disabled={!newAlias.alias || !newAlias.upstream_id}
+              onClick={() => void addModel()}
+              disabled={!newModel.upstream_id}
             >
-              {t("alias.submit")}
+              {t("create.submit")}
             </Button>
-          </Form.Item>
-        </Form>
+          </Space>
+        </div>
       </Card>
+
+      <PageTour
+        pageKey="models"
+        steps={[
+          {
+            target: segmentedRef,
+            title: tTour("models.s1.title"),
+            description: tTour("models.s1.desc"),
+          },
+          {
+            target: tableRef,
+            title: tTour("models.s2.title"),
+            description: tTour("models.s2.desc"),
+          },
+          {
+            target: addFormRef,
+            title: tTour("models.s3.title"),
+            description: tTour("models.s3.desc"),
+          },
+        ]}
+      />
     </>
   );
 }

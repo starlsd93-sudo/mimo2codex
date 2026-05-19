@@ -1,5 +1,6 @@
 {
-  "title": "模型",
+  "title": "内置模型",
+  "subtitle": "管理 mimo 与 deepseek 的自定义模型补充和过期日。通用 Provider 的模型在「通用 Provider」表单中维护。",
   "providerStatus": {
     "enabled": "已启用",
     "missingKey": "未配置 key"
@@ -12,7 +13,7 @@
       "capabilities": "能力",
       "context": "上下文",
       "source": "来源",
-      "deprecated": "过期",
+      "deprecated": "过期日",
       "ops": "操作"
     },
     "capability": {
@@ -24,7 +25,11 @@
       "builtin": "内置",
       "custom": "自定义"
     },
-    "readonly": "只读"
+    "readonly": "只读",
+    "deprecated": {
+      "placeholder": "未设置",
+      "saved": "已更新过期日"
+    }
   },
   "create": {
     "title": "新增自定义模型",
@@ -32,17 +37,5 @@
     "displayNamePlaceholder": "显示名（可选）",
     "submit": "添加"
   },
-  "deleteConfirm": "删除该自定义模型？",
-  "alias": {
-    "title": "别名（客户端 model 字段 → 上游 ID）",
-    "empty": "尚无别名",
-    "columns": {
-      "alias": "别名",
-      "mapTo": "映射到"
-    },
-    "namePlaceholder": "别名（客户端发的 model）",
-    "upstreamPlaceholder": "— 选择上游模型 —",
-    "submit": "添加",
-    "deleteConfirm": "删除别名 \"{{alias}}\"？"
-  }
+  "deleteConfirm": "删除该自定义模型？"
 }

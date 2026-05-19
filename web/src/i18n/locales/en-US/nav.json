@@ -1,10 +1,8 @@
 {
   "title": "mimo2codex",
   "dashboard": "Dashboard",
-  "setup": "Setup Guide",
-  "codexEnable": "Enable Codex",
+  "codexEnable": "Codex Integration",
   "providers": "Providers",
-  "models": "Models",
-  "logs": "Logs",
-  "settings": "Settings"
+  "models": "Built-in Models",
+  "logs": "Logs"
 }

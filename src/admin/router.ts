@@ -5,7 +5,10 @@ import { fileURLToPath } from "node:url";
 import type { Config } from "../config.js";
 import { PROVIDER_LIST, PROVIDERS } from "../providers/registry.js";
 import {
+  aggregateErrors,
+  aggregateLatency,
   aggregateMappings,
+  aggregateProviderHealth,
   aggregateStats,
   aggregateTokensTimeseries,
   deleteLogsBefore,
@@ -15,11 +18,8 @@ import {
 import {
   deleteModel,
   insertCustomModel,
-  listAliases,
   listModels,
   patchModel,
-  upsertAlias,
-  deleteAlias,
 } from "../db/models.js";
 import {
   deleteSetting,
@@ -419,43 +419,34 @@ async function handleApi(ctx: RouteContext): Promise<void> {
     return sendError(res, 405, "method_not_allowed", "use PATCH or DELETE");
   }
 
-  if (pathname === "/admin/api/aliases") {
-    if (req.method === "GET") {
-      return sendJson(res, 200, { aliases: listAliases() });
-    }
-    if (req.method === "POST") {
-      const body = await readJsonBody<{ alias?: string; provider_id?: string; upstream_id?: string }>(req);
-      if (!body.alias || !body.provider_id || !body.upstream_id) {
-        return sendError(res, 400, "missing_fields", "alias, provider_id and upstream_id required");
-      }
-      if (!isProviderId(body.provider_id)) {
-        return sendError(res, 400, "unknown_provider", `unknown provider ${body.provider_id}`);
-      }
-      upsertAlias({
-        alias: body.alias,
-        provider_id: body.provider_id,
-        upstream_id: body.upstream_id,
-      });
-      return sendJson(res, 201, { alias: body.alias });
-    }
-    return sendError(res, 405, "method_not_allowed", "use GET or POST");
-  }
-
-  const aliasMatch = pathname.match(/^\/admin\/api\/aliases\/(.+)$/);
-  if (aliasMatch && req.method === "DELETE") {
-    const alias = decodeURIComponent(aliasMatch[1]);
-    const ok = deleteAlias(alias);
-    if (!ok) return sendError(res, 404, "not_found", `alias ${alias} not found`);
-    return sendJson(res, 200, { deleted: true });
-  }
-
   if (req.method === "GET" && pathname === "/admin/api/logs") {
     const provider = query.get("provider") ?? undefined;
+    const model = query.get("model") ?? undefined;
+    const statusMin = query.get("statusMin") ? Number(query.get("statusMin")) : undefined;
+    const statusMax = query.get("statusMax") ? Number(query.get("statusMax")) : undefined;
     const from = query.get("from") ? Number(query.get("from")) : undefined;
     const to = query.get("to") ? Number(query.get("to")) : undefined;
     const limit = query.get("limit") ? Number(query.get("limit")) : undefined;
     const offset = query.get("offset") ? Number(query.get("offset")) : undefined;
-    return sendJson(res, 200, { logs: queryLogs({ provider, from, to, limit, offset }) });
+    return sendJson(res, 200, {
+      logs: queryLogs({ provider, model, statusMin, statusMax, from, to, limit, offset }),
+    });
+  }
+
+  if (req.method === "GET" && pathname === "/admin/api/stats/errors") {
+    const range = query.get("range") ?? "24h";
+    return sendJson(res, 200, aggregateErrors(range));
+  }
+
+  if (req.method === "GET" && pathname === "/admin/api/stats/latency") {
+    const range = query.get("range") ?? "24h";
+    return sendJson(res, 200, aggregateLatency(range));
+  }
+
+  if (req.method === "GET" && pathname === "/admin/api/provider-health") {
+    // Window defaults to 1h; allow override via ?ms=<ms> for ad-hoc widening.
+    const ms = query.get("ms") ? Number(query.get("ms")) : undefined;
+    return sendJson(res, 200, { rows: aggregateProviderHealth(ms) });
   }
 
   if (req.method === "DELETE" && pathname === "/admin/api/logs") {

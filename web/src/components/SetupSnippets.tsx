@@ -3,7 +3,6 @@ import { Trans, useTranslation } from "react-i18next";
 import {
   Alert,
   Button,
-  Card,
   Select,
   Space,
   Tabs,
@@ -91,7 +90,7 @@ function CodeBlock({ title, code }: { title?: string; code: string }) {
   );
 }
 
-export function Setup() {
+export function SetupSnippets() {
   const { t } = useTranslation("setup");
   const [data, setData] = useState<SetupSnippetsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -119,67 +118,62 @@ export function Setup() {
     void load(id);
   }
 
+  if (error) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message={error}
+        closable
+        onClose={() => setError(null)}
+      />
+    );
+  }
+
+  if (!data) return null;
+
   return (
     <>
-      <Typography.Title level={2} style={{ marginTop: 0 }}>
-        {t("title")}
-      </Typography.Title>
       <Typography.Paragraph type="secondary">{t("intro")}</Typography.Paragraph>
-
-      {error && (
-        <Alert
-          type="error"
-          showIcon
-          message={error}
-          closable
-          onClose={() => setError(null)}
-          style={{ marginBottom: 16 }}
+      <Space style={{ marginBottom: 16 }} wrap>
+        <Typography.Text type="secondary">{t("providerLabel")}:</Typography.Text>
+        <Select
+          value={selectedProvider ?? data.defaultProviderId}
+          onChange={onProviderChange}
+          style={{ minWidth: 220 }}
+          options={data.providers.map((p) => ({
+            value: p.id,
+            label:
+              p.display_name +
+              (p.id === data.defaultProviderId ? ` ${t("defaultTag")}` : ""),
+          }))}
         />
-      )}
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {t("currentModel")}: <code>{data.bundle.target.modelId}</code>
+        </Typography.Text>
+      </Space>
 
-      {data && (
-        <Card>
-          <Space style={{ marginBottom: 16 }} wrap>
-            <Typography.Text type="secondary">{t("providerLabel")}:</Typography.Text>
-            <Select
-              value={selectedProvider ?? data.defaultProviderId}
-              onChange={onProviderChange}
-              style={{ minWidth: 220 }}
-              options={data.providers.map((p) => ({
-                value: p.id,
-                label:
-                  p.display_name +
-                  (p.id === data.defaultProviderId ? ` ${t("defaultTag")}` : ""),
-              }))}
-            />
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {t("currentModel")}: <code>{data.bundle.target.modelId}</code>
-            </Typography.Text>
-          </Space>
-
-          <Tabs
-            activeKey={tab}
-            onChange={(k) => setTab(k as Tab)}
-            items={[
-              {
-                key: "auth",
-                label: t("tab.auth"),
-                children: <AuthTab data={data} platform={platform} />,
-              },
-              {
-                key: "envkey",
-                label: t("tab.envkey"),
-                children: <EnvKeyTab data={data} platform={platform} />,
-              },
-              {
-                key: "ccswitch",
-                label: t("tab.ccswitch"),
-                children: <CcSwitchTab data={data} />,
-              },
-            ]}
-          />
-        </Card>
-      )}
+      <Tabs
+        activeKey={tab}
+        onChange={(k) => setTab(k as Tab)}
+        items={[
+          {
+            key: "auth",
+            label: t("tab.auth"),
+            children: <AuthTab data={data} platform={platform} />,
+          },
+          {
+            key: "envkey",
+            label: t("tab.envkey"),
+            children: <EnvKeyTab data={data} platform={platform} />,
+          },
+          {
+            key: "ccswitch",
+            label: t("tab.ccswitch"),
+            children: <CcSwitchTab data={data} />,
+          },
+        ]}
+      />
     </>
   );
 }

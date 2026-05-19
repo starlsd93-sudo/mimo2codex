@@ -154,12 +154,6 @@ export interface ModelRow {
   sort_order: number;
 }
 
-export interface AliasRow {
-  alias: string;
-  provider_id: string;
-  upstream_id: string;
-}
-
 export interface LogRow {
   id: number;
   ts: number;
@@ -226,6 +220,28 @@ export interface TokenTimeseriesResponse {
   since: number;
   buckets: string[];
   series: TokenTimeseriesSeries[];
+}
+
+export interface ErrorStatsResponse {
+  since: number;
+  rows: Array<{ error_code: string; count: number }>;
+}
+
+export interface LatencyStatsResponse {
+  since: number;
+  count: number;
+  avg: number;
+  p50: number;
+  p95: number;
+  p99: number;
+}
+
+export interface ProviderHealthRow {
+  provider_id: string;
+  requests: number;
+  errors: number;
+  error_rate: number;
+  last_seen: number | null;
 }
 
 // ───────── Codex 启用 ─────────
@@ -302,13 +318,21 @@ export const api = {
   patchModel: (id: number, body: Partial<ModelRow>) =>
     request<{ model: ModelRow }>("PATCH", `/models/${id}`, body),
   deleteModel: (id: number) => request<{ deleted: boolean }>("DELETE", `/models/${id}`),
-  aliases: () => request<{ aliases: AliasRow[] }>("GET", "/aliases"),
-  upsertAlias: (body: AliasRow) => request<{ alias: string }>("POST", "/aliases", body),
-  deleteAlias: (alias: string) =>
-    request<{ deleted: boolean }>("DELETE", `/aliases/${encodeURIComponent(alias)}`),
-  logs: (params: { provider?: string; limit?: number; offset?: number } = {}) => {
+  logs: (
+    params: {
+      provider?: string;
+      model?: string;
+      statusMin?: number;
+      statusMax?: number;
+      limit?: number;
+      offset?: number;
+    } = {}
+  ) => {
     const qs = new URLSearchParams();
     if (params.provider) qs.set("provider", params.provider);
+    if (params.model) qs.set("model", params.model);
+    if (typeof params.statusMin === "number") qs.set("statusMin", String(params.statusMin));
+    if (typeof params.statusMax === "number") qs.set("statusMax", String(params.statusMax));
     if (params.limit) qs.set("limit", String(params.limit));
     if (params.offset) qs.set("offset", String(params.offset));
     const suffix = qs.toString() ? `?${qs}` : "";
@@ -325,6 +349,12 @@ export const api = {
       "GET",
       `/stats/timeseries?range=${range}&bucket=${bucket}`
     ),
+  errorStats: (range: "24h" | "7d" | "30d" = "24h") =>
+    request<ErrorStatsResponse>("GET", `/stats/errors?range=${range}`),
+  latencyStats: (range: "24h" | "7d" | "30d" = "24h") =>
+    request<LatencyStatsResponse>("GET", `/stats/latency?range=${range}`),
+  providerHealth: () =>
+    request<{ rows: ProviderHealthRow[] }>("GET", "/provider-health"),
   settings: () => request<{ settings: Record<string, string> }>("GET", "/settings"),
   setSetting: (key: string, value: string) =>
     request<{ key: string; value: string }>("PUT", `/settings/${encodeURIComponent(key)}`, {

@@ -1,6 +1,15 @@
 {
-  "title": "Enable Codex",
+  "title": "Codex Integration",
   "intro": "One-click switch the model Codex actually calls — a replacement for ccswitch. Two mechanisms are offered:",
+  "prereq": {
+    "title": "Prerequisites / manual config snippets",
+    "subtitle": "auth.json / config.toml / env vars / cc-switch — click to expand"
+  },
+  "tabs": {
+    "targets": "Targets",
+    "thinking": "Thinking & Override",
+    "backups": "Backups"
+  },
   "modesInfo": {
     "applyFile": "<1>Write files and enable</1>: physically writes ~/.codex/auth.json and ~/.codex/config.toml, same as ccswitch. <3>Requires a Codex restart</3>. Original files are auto-backed up and one-click restorable.",
     "runtimeOverride": "<1>Runtime override only</1>: stores the active (provider, model) inside mimo2codex; selectProvider prefers it during routing. <3>No Codex restart needed</3>, but Codex must already connect to mimo2codex (first-time setup still needs the option above)."
@@ -47,6 +56,9 @@
     "title": "Available combinations",
     "externalWarn": "Your current ~/.codex/auth.json was not written by mimo2codex (probably a real OpenAI login or another tool). 'Write files and enable' will back it up first, then overwrite — restore is always available.",
     "empty": "No model combinations available.",
+    "testAll": "Test all",
+    "testAllBusy": "testing…",
+    "testAllHint": "Probes every provider's default model that has an API key configured",
     "hasKey": "key configured",
     "missingKey": "no key",
     "columns": {

@@ -1,5 +1,12 @@
 {
   "title": "设置",
+  "modal": {
+    "openBtn": "更多",
+    "title": "设置",
+    "providers": "Provider 配置速览",
+    "mappings": "活跃模型映射",
+    "dataDir": "本地数据目录"
+  },
   "ui": {
     "title": "UI 偏好",
     "theme": "主题",
@@ -42,5 +49,17 @@
     "title": "本地数据目录",
     "currentLabel": "当前 dataDir",
     "hint": "数据目录由启动参数决定 (CLI --data-dir 或 env MIMO2CODEX_DATA_DIR), UI 不可改写. 默认为 ~/.mimo2codex/."
+  },
+  "mappings": {
+    "title": "活跃模型映射",
+    "subtitle": "客户端 model 字段实际被路由到的上游模型记录。属于运行配置，不是用量统计。",
+    "columns": {
+      "provider": "Provider",
+      "clientModel": "客户端发的 model",
+      "upstreamModel": "实际上游 model",
+      "count": "命中次数",
+      "lastSeen": "最近一次"
+    },
+    "empty": "尚无映射记录（发送一次请求即可）"
   }
 }

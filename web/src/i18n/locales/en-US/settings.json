@@ -1,5 +1,12 @@
 {
   "title": "Settings",
+  "modal": {
+    "openBtn": "More",
+    "title": "Settings",
+    "providers": "Provider Overview",
+    "mappings": "Active Model Mappings",
+    "dataDir": "Local Data Directory"
+  },
   "ui": {
     "title": "UI Preferences",
     "theme": "Theme",
@@ -42,5 +49,17 @@
     "title": "Local Data Directory",
     "currentLabel": "Current dataDir",
     "hint": "The data directory is fixed at startup (CLI --data-dir or env MIMO2CODEX_DATA_DIR) and cannot be changed from the UI. Defaults to ~/.mimo2codex/."
+  },
+  "mappings": {
+    "title": "Active Model Mappings",
+    "subtitle": "Records which upstream model each client `model` field actually routes to. This is runtime configuration, not usage statistics.",
+    "columns": {
+      "provider": "Provider",
+      "clientModel": "Client model",
+      "upstreamModel": "Upstream model",
+      "count": "Hit count",
+      "lastSeen": "Last seen"
+    },
+    "empty": "No mappings recorded yet (send a request to populate)"
   }
 }

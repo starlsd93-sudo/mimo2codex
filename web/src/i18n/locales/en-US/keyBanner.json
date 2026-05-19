@@ -1,6 +1,8 @@
 {
   "allOk": "All provider API keys are present via environment variables.",
+  "allOkShort": "All keys present",
   "missingTitle": "Missing API keys for the following providers:",
+  "missingShort": "{{count}} provider(s) missing key",
   "missingHint": "API keys are never stored in the UI. Inject each key via env var, then restart mimo2codex:",
   "exampleLabel": "Example:",
   "macLinux": "macOS / Linux",

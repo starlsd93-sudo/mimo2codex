@@ -2,16 +2,29 @@
   "title": "聊天日志",
   "filter": {
     "providerLabel": "Provider",
+    "modelLabel": "模型",
+    "modelPlaceholder": "模型名包含…",
+    "statusLabel": "状态",
+    "status": {
+      "all": "全部",
+      "ok": "成功",
+      "error": "错误"
+    },
     "all": "全部"
   },
   "action": {
     "refresh": "刷新",
-    "clearOld": "清理旧日志…"
+    "clearOld": "清理旧日志…",
+    "exportCsv": "导出 CSV"
   },
   "clearOld": {
     "title": "清理旧日志",
     "label": "删除多少天之前的日志",
+    "cutoff": "将删除 {{date}} 之前的所有日志",
     "removed": "已删除 {{count}} 条"
+  },
+  "export": {
+    "empty": "当前页没有日志可以导出"
   },
   "columns": {
     "ts": "时间",
@@ -33,7 +46,20 @@
     "requestBody": "请求内容",
     "responseBody": "响应内容",
     "notCaptured": "（未捕获）",
-    "chars": "{{count}} 字符"
+    "chars": "{{count}} 字符",
+    "modeStructured": "结构化",
+    "modeRaw": "原始 JSON",
+    "summary": "概要",
+    "messages": "请求消息",
+    "tools": "工具",
+    "completion": "回复内容",
+    "field": {
+      "model": "模型",
+      "duration": "耗时",
+      "tokens": "Tokens (prompt/comp/total)",
+      "cached": "缓存命中",
+      "tools": "工具调用"
+    }
   },
   "stream": "stream",
   "empty": "暂无日志"

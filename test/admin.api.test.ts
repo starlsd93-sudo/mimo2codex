@@ -194,19 +194,6 @@ describe("admin REST", () => {
     expect((get.json as { settings: Record<string, string> }).settings["ui.theme"]).toBe("dark");
   });
 
-  it("aliases POST + GET + DELETE round-trip", async () => {
-    const post = await call("POST", "/admin/api/aliases", {
-      alias: "fast", provider_id: "mimo", upstream_id: "mimo-v2-flash",
-    });
-    expect(post.status).toBe(201);
-    const list = await call("GET", "/admin/api/aliases");
-    expect(
-      (list.json as { aliases: Array<{ alias: string }> }).aliases.find((a) => a.alias === "fast")
-    ).toBeDefined();
-    const del = await call("DELETE", "/admin/api/aliases/fast");
-    expect(del.status).toBe(200);
-  });
-
   it("404 for unknown admin path", async () => {
     const r = await call("GET", "/admin/api/nope");
     expect(r.status).toBe(404);

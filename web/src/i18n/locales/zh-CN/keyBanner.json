@@ -1,6 +1,8 @@
 {
   "allOk": "所有 provider 的 API key 均已通过环境变量注入。",
+  "allOkShort": "全部接入",
   "missingTitle": "未检测到以下 provider 的 API key：",
+  "missingShort": "{{count}} 个 Provider 未配置 key",
   "missingHint": "API key 不存储在本 UI 中。请通过环境变量注入对应 key 后重启 mimo2codex：",
   "exampleLabel": "示例：",
   "macLinux": "macOS / Linux",

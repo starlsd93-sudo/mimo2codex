@@ -11,8 +11,6 @@ import {
   listModels,
   patchModel,
   deleteModel,
-  upsertAlias,
-  lookupAlias,
 } from "../src/db/models.js";
 
 let dataDir: string;
@@ -298,12 +296,4 @@ describe("custom models + aliases", () => {
     expect(() => deleteModel(builtin.id)).toThrow(/builtin models cannot be deleted/);
   });
 
-  it("aliases upsert + lookup", () => {
-    upsertAlias({ alias: "fast", provider_id: "mimo", upstream_id: "mimo-v2-flash" });
-    const r = lookupAlias("fast");
-    expect(r?.provider_id).toBe("mimo");
-    expect(r?.upstream_id).toBe("mimo-v2-flash");
-    upsertAlias({ alias: "fast", provider_id: "deepseek", upstream_id: "deepseek-v4-flash" });
-    expect(lookupAlias("fast")?.provider_id).toBe("deepseek");
-  });
 });

@@ -1,0 +1,81 @@
+{
+  "openHelper": "Show guide",
+  "dashboard": {
+    "s1": {
+      "title": "Time range",
+      "desc": "Switch between last 24h / 7d / 30d. Every metric and chart below updates accordingly."
+    },
+    "s2": {
+      "title": "Core metrics",
+      "desc": "Six compact cells: requests, errors (with rate), tokens, cache hit, latency P50 (hover for P95/P99), enabled providers with health tags. Errors-by-code tags appear at the bottom when there are failures."
+    },
+    "s3": {
+      "title": "Token usage trend",
+      "desc": "Multi-series line chart broken down by model. Toggle between hourly and daily buckets; click any legend entry to hide that series."
+    },
+    "s4": {
+      "title": "Recent 10 requests",
+      "desc": "Click any row to jump straight to the Logs page with that entry auto-expanded — fastest path to inspecting a recent request."
+    }
+  },
+  "codex": {
+    "s1": {
+      "title": "Current state",
+      "desc": "Shows whose auth.json / config.toml is currently live (mimo2codex / external / missing) plus the runtime override. First place to check 'which provider am I actually on'."
+    },
+    "s2": {
+      "title": "Prerequisites / snippets",
+      "desc": "Expand on first-time setup: pick a provider and we generate copy-pasteable auth.json / config.toml / cc-switch snippets."
+    },
+    "s3": {
+      "title": "Three tabs",
+      "desc": "Targets: pick a provider × model to write files or set as runtime override. Thinking & Override: global thinking switch + current override clear. Backups: history of every file-write with one-click restore."
+    },
+    "s4": {
+      "title": "Test all",
+      "desc": "Concurrently probes every provider's default model that has an API key — see in seconds which link is live and how slow each is."
+    }
+  },
+  "providers": {
+    "s1": {
+      "title": "Add provider",
+      "desc": "Supports any OpenAI / Responses compatible upstream. Preset buttons apply SenseNova / MiniMax / Kimi recommended sanitizer combos in one click — no need to flip 11 switches by hand."
+    },
+    "s2": {
+      "title": "Edit raw JSON",
+      "desc": "Power-user path: edit providers.json verbatim. Validation surfaces inline with a specific parse error; the OK button stays disabled until JSON is valid."
+    },
+    "s3": {
+      "title": "Provider list",
+      "desc": "Hit the edit button on any row to change baseUrl / envKey / model list / sanitizer switches. Saving auto-reloads the registry."
+    }
+  },
+  "models": {
+    "s1": {
+      "title": "Switch built-in provider",
+      "desc": "This page only manages the model catalog for the two built-in providers (mimo / deepseek). Generic providers maintain their models inline in the Providers form."
+    },
+    "s2": {
+      "title": "Model list",
+      "desc": "Built-in rows are read-only. Custom rows let you inline-edit the 'Deprecated after' date via DatePicker — useful for flagging legacy variants."
+    },
+    "s3": {
+      "title": "Add a custom model",
+      "desc": "Type an upstream_id and display name at the bottom of the card. Handy when a vendor ships a new model id we haven't seeded into the builtin list yet."
+    }
+  },
+  "logs": {
+    "s1": {
+      "title": "Server-side filtering",
+      "desc": "Provider dropdown is dynamically loaded; model is a LIKE substring search; status filter slices by 2xx / 4xx+. All filters run server-side so pagination stays correct."
+    },
+    "s2": {
+      "title": "Export / cleanup",
+      "desc": "Export CSV dumps the currently-filtered page. Clear-old shows the computed cutoff date so you can confirm the range before deleting."
+    },
+    "s3": {
+      "title": "Row detail",
+      "desc": "Expand any row to see the Structured view by default: parsed messages / tools / completion + token summary. Toggle to Raw JSON to inspect the full body."
+    }
+  }
+}

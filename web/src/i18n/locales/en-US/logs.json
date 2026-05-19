@@ -2,16 +2,29 @@
   "title": "Chat Logs",
   "filter": {
     "providerLabel": "Provider",
+    "modelLabel": "Model",
+    "modelPlaceholder": "Model name contains…",
+    "statusLabel": "Status",
+    "status": {
+      "all": "All",
+      "ok": "Success",
+      "error": "Error"
+    },
     "all": "All"
   },
   "action": {
     "refresh": "Refresh",
-    "clearOld": "Clear old logs…"
+    "clearOld": "Clear old logs…",
+    "exportCsv": "Export CSV"
   },
   "clearOld": {
     "title": "Clear old logs",
     "label": "Delete logs older than (days)",
+    "cutoff": "Will delete all logs before {{date}}",
     "removed": "Removed {{count}} entries"
+  },
+  "export": {
+    "empty": "Nothing to export on this page"
   },
   "columns": {
     "ts": "Time",
@@ -33,7 +46,20 @@
     "requestBody": "Request body",
     "responseBody": "Response body",
     "notCaptured": "(not captured)",
-    "chars": "{{count}} chars"
+    "chars": "{{count}} chars",
+    "modeStructured": "Structured",
+    "modeRaw": "Raw JSON",
+    "summary": "Summary",
+    "messages": "Request messages",
+    "tools": "Tools",
+    "completion": "Completion",
+    "field": {
+      "model": "Model",
+      "duration": "Duration",
+      "tokens": "Tokens (prompt/comp/total)",
+      "cached": "Cached",
+      "tools": "Tool calls"
+    }
   },
   "stream": "stream",
   "empty": "No logs yet"

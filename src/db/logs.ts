@@ -75,6 +75,11 @@ export function insertLog(entry: ChatLogEntry): void {
 
 export interface LogFilter {
   provider?: string;
+  // Substring match against upstream_model (case-sensitive, SQL LIKE).
+  model?: string;
+  // Inclusive bounds for HTTP status_code, useful to slice success vs error.
+  statusMin?: number;
+  statusMax?: number;
   from?: number;
   to?: number;
   limit?: number;
@@ -119,6 +124,18 @@ export function queryLogs(filter: LogFilter = {}): LogRow[] {
   if (filter.provider) {
     where.push("provider_id = @provider");
     params.provider = filter.provider;
+  }
+  if (filter.model) {
+    where.push("upstream_model LIKE @model");
+    params.model = `%${filter.model}%`;
+  }
+  if (typeof filter.statusMin === "number") {
+    where.push("status_code >= @statusMin");
+    params.statusMin = filter.statusMin;
+  }
+  if (typeof filter.statusMax === "number") {
+    where.push("status_code <= @statusMax");
+    params.statusMax = filter.statusMax;
   }
   if (typeof filter.from === "number") {
     where.push("ts >= @from");
@@ -203,6 +220,101 @@ export function aggregateStats(range: string): { since: number; rows: StatsRow[]
 export function deleteLogsBefore(ts: number): number {
   const info = getDb().prepare("DELETE FROM chat_logs WHERE ts < ?").run(ts);
   return info.changes;
+}
+
+export interface ErrorBucket {
+  error_code: string;
+  count: number;
+}
+
+export function aggregateErrors(range: string): { since: number; rows: ErrorBucket[] } {
+  const span = RANGE_MS[range] ?? RANGE_MS["24h"];
+  const since = Date.now() - span;
+  const rows = getDb()
+    .prepare(
+      `SELECT COALESCE(error_code, 'http_' || status_code) AS error_code, COUNT(*) AS count
+       FROM chat_logs
+       WHERE ts >= @since AND status_code >= 400
+       GROUP BY error_code
+       ORDER BY count DESC`
+    )
+    .all({ since }) as ErrorBucket[];
+  return { since, rows };
+}
+
+export interface LatencyStats {
+  since: number;
+  count: number;
+  avg: number;
+  p50: number;
+  p95: number;
+  p99: number;
+}
+
+// Latency percentiles over the window. We pull duration_ms into JS to compute
+// quantiles because SQLite lacks PERCENTILE_CONT — for typical windows
+// (≤30 days × ≤thousands of requests) this is fine; if traffic grows past
+// 1M rows we can revisit with a window-function approach.
+export function aggregateLatency(range: string): LatencyStats {
+  const span = RANGE_MS[range] ?? RANGE_MS["24h"];
+  const since = Date.now() - span;
+  const rows = getDb()
+    .prepare(
+      `SELECT duration_ms FROM chat_logs
+       WHERE ts >= @since AND duration_ms IS NOT NULL
+       ORDER BY duration_ms ASC`
+    )
+    .all({ since }) as Array<{ duration_ms: number }>;
+  if (rows.length === 0) {
+    return { since, count: 0, avg: 0, p50: 0, p95: 0, p99: 0 };
+  }
+  const values = rows.map((r) => r.duration_ms);
+  const sum = values.reduce((a, b) => a + b, 0);
+  const pct = (q: number): number => {
+    if (values.length === 1) return values[0];
+    const idx = Math.min(values.length - 1, Math.floor((values.length - 1) * q));
+    return values[idx];
+  };
+  return {
+    since,
+    count: values.length,
+    avg: Math.round(sum / values.length),
+    p50: pct(0.5),
+    p95: pct(0.95),
+    p99: pct(0.99),
+  };
+}
+
+export interface ProviderHealthRow {
+  provider_id: string;
+  requests: number;
+  errors: number;
+  // 0..100; -1 when zero requests in the window.
+  error_rate: number;
+  last_seen: number | null;
+}
+
+// Last hour error rate per provider — feeds the Dashboard "Provider Status"
+// card. Provider with no traffic returns error_rate = -1 so the UI can
+// distinguish "no data" from "0% errors".
+export function aggregateProviderHealth(rangeMs: number = 60 * 60 * 1000): ProviderHealthRow[] {
+  const since = Date.now() - rangeMs;
+  return getDb()
+    .prepare(
+      `SELECT provider_id,
+              COUNT(*) AS requests,
+              SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS errors,
+              CASE
+                WHEN COUNT(*) = 0 THEN -1
+                ELSE ROUND(100.0 * SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) / COUNT(*), 1)
+              END AS error_rate,
+              MAX(ts) AS last_seen
+       FROM chat_logs
+       WHERE ts >= @since
+       GROUP BY provider_id
+       ORDER BY requests DESC`
+    )
+    .all({ since }) as ProviderHealthRow[];
 }
 
 // Per-day token usage broken down by (provider_id, upstream_model). The

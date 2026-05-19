@@ -104,7 +104,7 @@ export function AppConfigProvider({ children }: { children: ReactNode }) {
     return () => mql.removeEventListener("change", handler);
   }, []);
 
-  const themeMode: ThemeMode = isThemeMode(settings["ui.theme"]) ? settings["ui.theme"] : "dark";
+  const themeMode: ThemeMode = isThemeMode(settings["ui.theme"]) ? settings["ui.theme"] : "auto";
   const lang: SupportedLang = isLang(settings["ui.lang"]) ? settings["ui.lang"] : DEFAULT_LANG;
   const resolvedTheme: ResolvedTheme = themeMode === "auto" ? systemTheme : themeMode;
 

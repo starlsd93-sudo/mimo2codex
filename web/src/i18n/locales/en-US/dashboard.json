@@ -1,6 +1,6 @@
 {
   "title": "Dashboard",
-  "setupBanner": "First time here? See <1>Setup Guide</1> — copy-paste config snippets to wire Codex into mimo2codex (auth.json + config.toml).",
+  "setupBanner": "First time here? See <1>Codex Integration</1> — expand 'Prerequisites' at the top to grab config snippets that wire Codex into mimo2codex (auth.json + config.toml).",
   "range": {
     "label": "Range",
     "options": {
@@ -25,7 +25,26 @@
     "providers": {
       "label": "Enabled providers",
       "subEmpty": "none"
+    },
+    "cache": {
+      "label": "Cache hit rate",
+      "sub": "{{cached}} cached / {{prompt}} prompt",
+      "subEmpty": "No prompt data in window"
+    },
+    "latency": {
+      "label": "Latency P50",
+      "sub": "avg {{avg}}ms · P95 {{p95}}ms · P99 {{p99}}ms",
+      "subEmpty": "No requests in window"
+    },
+    "health": {
+      "label": "Provider Health (last 1h)",
+      "empty": "No requests in the last hour",
+      "tip": "{{requests}} req / {{errors}} err (error rate {{rate}}%)",
+      "idleTip": "No requests from this provider in the last hour"
     }
+  },
+  "errors": {
+    "title": "Errors by error_code"
   },
   "chart": {
     "title": "Token usage trend",
@@ -62,17 +81,6 @@
       "total": "Total"
     },
     "empty": "No requests in this window"
-  },
-  "mappings": {
-    "title": "Model mappings",
-    "columns": {
-      "provider": "Provider",
-      "clientModel": "Client model",
-      "upstreamModel": "Upstream model",
-      "count": "Hits",
-      "lastSeen": "Last seen"
-    },
-    "empty": "No mapping records yet (send a request to populate)"
   },
   "recent": {
     "title": "Recent 10 requests",

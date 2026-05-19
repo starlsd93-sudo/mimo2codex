@@ -100,11 +100,6 @@ function seedBuiltins(db: DB): void {
       deprecated_after = excluded.deprecated_after,
       sort_order = excluded.sort_order
   `);
-  const upsertAlias = db.prepare(`
-    INSERT INTO model_aliases (alias, provider_id, upstream_id)
-    VALUES (@alias, @provider_id, @upstream_id)
-    ON CONFLICT(alias) DO NOTHING
-  `);
   // Drop builtin rows whose upstream_id has been removed from source. This
   // is what prunes legacy seeds like the old "mimo-v2.5-pro[1m]" variant
   // after we consolidated the catalog. User-created custom models
@@ -143,9 +138,6 @@ function seedBuiltins(db: DB): void {
           deprecated_after: m.deprecatedAfter ?? null,
           sort_order: order++,
         });
-        for (const alias of m.aliases ?? []) {
-          upsertAlias.run({ alias, provider_id: p.id, upstream_id: m.id });
-        }
       }
       pruneStale.run({ provider_id: p.id, keep_json: JSON.stringify(keep) });
     }

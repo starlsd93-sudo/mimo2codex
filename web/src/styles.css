@@ -32,3 +32,22 @@ a:hover {
   font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono",
     "Roboto Mono", Consolas, monospace;
 }
+
+/* AppHeader missing-key indicator — pulses to grab attention without
+   slamming the user with a full banner. Pauses on hover so the popover
+   trigger doesn't visually wiggle while they're aiming at it. */
+@keyframes m2c-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(250, 173, 20, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(250, 173, 20, 0);
+  }
+}
+.m2c-key-pulse {
+  animation: m2c-pulse 1.6s ease-in-out infinite;
+  border-radius: 4px;
+}
+.m2c-key-pulse:hover {
+  animation: none;
+}
