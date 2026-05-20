@@ -20,6 +20,7 @@ mimo2codex 的版本发布历史，按 tag 倒序排列。
 ## （v0.3.0）
 
 - **[new]** **Docker 鉴权部署正式发布（GA）**：v0.2.17 作为预览验证后，**Docker 鉴权模式**作为稳定特性发布 —— 用户注册 / 登录系统、每用户独立的 m2c 代理 API key、BYOK（自带上游 key）、Gitee / GitHub OAuth、Codex 客户端配置 bundle 下载。把 mimo2codex 部署到 Docker / 内网 / 小圈子时不再泄漏上游 key。本地单机运行（`authMode` 默认 `off`）完全不受影响。完整教程：[doc/auth-deployment.zh.md](./auth-deployment.zh.md) —— 含 Docker compose、首次启动 bootstrap、OAuth 配置、故障排查。
+- **[fix]** **工具列表去重防御（[issue #20](https://github.com/7as0nch/mimo2codex/issues/20)）**：新版 Codex CLI / Desktop / DeX 会发出重名工具（典型样例：顶层 `_fetch` 函数 + namespace 展平后再来一个 `_fetch`），导致 MiMo 上游 400 `"tools contains duplicate names: _fetch"`。reqToChat 在工具合并后按 `function.name` / 内置 `type` 二维 keep-first 去重；重复时记 `WARN` 日志告知用户这是客户端 bug。
 - **[new]** **思考模式混合历史防御**：检测到会话历史里有 assistant 消息缺 `reasoning_content`（典型场景：用户在同会话切换"默认开启思考"开关），自动给这些历史消息回填占位符 `"(this turn ran without thinking mode)"`，**思考保留为开**，避免上游 MiMo / DeepSeek 400 `"reasoning_content must be passed back"`。配套 INFO 日志。
 - **[opt]** 控制台日志降噪：`WARN client model rewritten on the way upstream` → `INFO model fallback applied — client sent unknown model id, request continues with provider default`。降级到 INFO + 改文案，不再让人误以为是错误（实际是 graceful fallback，请求正常完成）。
 - **[doc]** 新增双语 [代理 / 网络 FAQ](./proxy-faq.zh.md)：mac & win 各自代理设置、502 / ECONNREFUSED / DNS / TLS-MITM 等错误码自查表、`gpt-5.4` placeholder 来源解释、思考模式混合历史现象说明。

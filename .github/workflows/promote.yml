@@ -8,8 +8,11 @@ name: Promote npm dist-tag
 #   target_tag: latest
 #
 # Equivalent to `npm dist-tag add mimo2codex@0.2.5-beta.0 latest` run from
-# a maintainer's machine — but doesn't need 2FA/OTP locally, uses the same
-# NPM_TOKEN the publish workflow uses.
+# a maintainer's machine — but doesn't need 2FA/OTP locally.
+#
+# Auth: same Trusted Publisher (OIDC) path as publish.yml. The npm package's
+# Trusted Publisher config must include `promote.yml` (in addition to
+# `publish.yml`) for npm to accept the OIDC token from this workflow.
 
 on:
   workflow_dispatch:
@@ -50,16 +53,12 @@ jobs:
           fi
 
       - name: Apply target dist-tag
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm dist-tag add "mimo2codex@${{ github.event.inputs.version }}" "${{ github.event.inputs.target_tag }}"
           echo "::notice::mimo2codex@${{ github.event.inputs.version }} is now also dist-tag '${{ github.event.inputs.target_tag }}'"
 
       - name: Remove stale dist-tag (optional)
         if: github.event.inputs.remove_old_tag != ''
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm dist-tag rm mimo2codex "${{ github.event.inputs.remove_old_tag }}" || \
             echo "::warning::dist-tag '${{ github.event.inputs.remove_old_tag }}' was not present"

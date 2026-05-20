@@ -785,6 +785,102 @@ describe("reqToChat", () => {
     expect((tool as Record<string, unknown>).function).toBeUndefined();
   });
 
+  // Issue #20: Codex CLI / Desktop / DeX can send the same tool name twice
+  // (e.g. a top-level `_fetch` function + a `namespace`-wrapped `_fetch` that
+  // flattens to a second copy). MiMo rejects with
+  //   400 Param Incorrect: tools contains duplicate names: _fetch
+  // reqToChat must dedupe defensively.
+  describe("tool dedup (issue #20)", () => {
+    it("two function tools with the same name → keep first, drop second", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "hi",
+        tools: [
+          { type: "function", name: "_fetch", description: "first" } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+          { type: "function", name: "_fetch", description: "second (duplicate)" } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      expect(chat.tools).toHaveLength(1);
+      const fn = (chat.tools![0] as { type: string; function: { name: string; description?: string } });
+      expect(fn.type).toBe("function");
+      expect(fn.function.name).toBe("_fetch");
+      expect(fn.function.description).toBe("first");
+    });
+
+    it("top-level function + namespace-wrapped same name → deduped (real-world #20 shape)", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "hi",
+        tools: [
+          { type: "function", name: "_fetch", description: "top-level" } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+          {
+            type: "namespace",
+            name: "builtin",
+            tools: [
+              { type: "function", name: "_fetch", description: "nested" },
+            ],
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      // 2 tools came in (top-level + namespace flattens to 1); dedup leaves 1.
+      expect(chat.tools).toHaveLength(1);
+      const fn = (chat.tools![0] as { function: { name: string; description?: string } });
+      expect(fn.function.name).toBe("_fetch");
+      // First-wins keeps the top-level definition.
+      expect(fn.function.description).toBe("top-level");
+    });
+
+    it("two web_search builtin tools → deduped to one", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          { type: "web_search" } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+          { type: "web_search_preview" } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req, { enableWebSearch: true });
+      // Both translate to MiMo's `web_search` builtin → dedupe collapses them.
+      expect(chat.tools).toHaveLength(1);
+      expect((chat.tools![0] as { type: string }).type).toBe("web_search");
+    });
+
+    it("different tool names are NOT deduped (regression guard)", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "hi",
+        tools: [
+          { type: "function", name: "_fetch" } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+          { type: "function", name: "_search" } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+          { type: "function", name: "_apply_patch" } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      expect(chat.tools).toHaveLength(3);
+    });
+
+    it("function `web_search` and builtin `web_search` live in different namespaces → both kept", () => {
+      // Pathological mix: a function tool happens to be named "web_search"
+      // and the client also includes the builtin web_search. They don't
+      // collide in our dedup model (one is fn:web_search, the other is
+      // builtin:web_search) — matching how upstream validates.
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          { type: "function", name: "web_search", description: "user-defined fn" } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+          { type: "web_search" } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req, { enableWebSearch: true });
+      expect(chat.tools).toHaveLength(2);
+      const types = chat.tools!.map((t) => t.type).sort();
+      expect(types).toEqual(["function", "web_search"]);
+    });
+  });
+
   it("plain Codex web_search (no user_location) is translated and preserves MiMo extras (with --web-search)", () => {
     const req: ResponsesRequest = {
       model: "mimo-v2.5-pro",

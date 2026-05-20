@@ -124,9 +124,16 @@ jobs:
       - run: npm run build:all
       - run: npm test
 
+      # Auth via Trusted Publisher (OIDC) — npm verifies the GitHub Actions
+      # OIDC token against the publisher config registered on the npm package
+      # (Settings → Trusted Publisher). No NPM_TOKEN secret needed; the
+      # `id-token: write` permission at the top of this file is what enables it.
+      # Same OIDC token also powers `--provenance`.
+      #
+      # Migrated 2026-05-20 after npm rotated long-lived 2FA-bypass tokens as a
+      # supply-chain hardening measure ("Mini Shai-Hulud"). See:
+      # https://docs.npmjs.com/trusted-publishers
       - run: npm publish --tag "${{ steps.meta.outputs.dist_tag }}" --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # Create the GitHub Release ONLY after a successful npm publish, so the
       # sidebar "Latest" badge never points at a version that didn't actually

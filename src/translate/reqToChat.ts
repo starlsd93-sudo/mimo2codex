@@ -411,6 +411,47 @@ function toolToChat(t: ResponsesTool, opts: ReqToChatOpts): ChatTool | ChatTool[
   return null;
 }
 
+// Defensive dedup at the tool merge site (issue #20).
+//
+// Codex CLI / Desktop builds (especially newer versions / DeX) sometimes send
+// the same tool name twice — e.g. a top-level `function` tool `_fetch`
+// alongside a `namespace`-wrapped `_fetch` that flattens to a second copy of
+// the same name. MiMo (and most strict OpenAI-compatible upstreams) reject
+// the merged tools list with
+//   400 Param Incorrect: tools contains duplicate names: _fetch
+// even though both definitions came from the client. This proxy has no way
+// to tell which copy is "right," so we keep the first occurrence (typical
+// client intent: namespace-wrapped versions come later and shadow the
+// builtin) and drop the rest with a one-shot warn so users notice.
+//
+// Dedup keys:
+//   - function tools  → "fn:<function.name>"
+//   - builtin tools   → "builtin:<type>" (web_search, code_interpreter, ...)
+// A function named "web_search" and a builtin `web_search` tool will NOT
+// collide — they live in different namespaces — which matches how the
+// upstream validates the field too.
+function dedupeToolsByName(tools: ChatTool[]): ChatTool[] {
+  const seen = new Set<string>();
+  const out: ChatTool[] = [];
+  for (const t of tools) {
+    const key =
+      t.type === "function"
+        ? `fn:${t.function.name}`
+        : `builtin:${t.type}`;
+    if (seen.has(key)) {
+      const label = key.replace(/^(fn|builtin):/, "");
+      log.warn(
+        `dropping duplicate tool "${label}" — client sent it more than once. ` +
+          "This is typically a Codex CLI / Desktop bug (issue #20); the dedupe is defensive."
+      );
+      continue;
+    }
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
+}
+
 function toolChoiceToChat(tc: ResponsesToolChoice | undefined): ChatToolChoice | undefined {
   if (tc === undefined) return undefined;
   if (typeof tc === "string") return tc;
@@ -693,7 +734,7 @@ export function reqToChat(req: ResponsesRequest, opts: ReqToChatOpts = {}): Chat
       if (Array.isArray(r)) mapped.push(...r);
       else if (r) mapped.push(r);
     }
-    if (mapped.length > 0) chat.tools = mapped;
+    if (mapped.length > 0) chat.tools = dedupeToolsByName(mapped);
   }
   const tc = toolChoiceToChat(req.tool_choice);
   if (tc !== undefined) chat.tool_choice = tc;
