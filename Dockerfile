@@ -1,16 +1,29 @@
 # ── 构建阶段 ──────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+# 关键：用 --platform=$BUILDPLATFORM 强制 builder 跑在构建机原生 arch
+# （GitHub runner = amd64）。否则 buildx 多架构构建时，arm64 阶段会让 npm
+# 跑在 QEMU 模拟下，Node 20 + Alpine + qemu-user-static 经常触发 SIGILL
+# （exit 132）。better-sqlite3 是 native module，通过 npm_config_target_*
+# 引导 prebuild-install 拉对应目标 arch 的预编译 .node 文件，所以构建过程
+# 完全不依赖 QEMU 模拟。
+FROM --platform=$BUILDPLATFORM node:20-alpine AS builder
+ARG TARGETARCH
 
 WORKDIR /app
 
-# better-sqlite3 编译依赖
+# better-sqlite3 编译依赖（兜底，正常 prebuild-install 直接拉 .node）
 RUN apk add --no-cache python3 make g++
+
+# 把目标平台 / libc 钉死给 prebuild-install。
+# better-sqlite3 在 npm 上有 linux + musl + {x64, arm64} 的预编译包。
+ENV npm_config_target_platform=linux
+ENV npm_config_target_libc=musl
 
 # 先复制依赖清单，利用 Docker 层缓存
 COPY package.json package-lock.json ./
 COPY web/package.json web/package-lock.json ./web/
 
-RUN npm ci && npm --prefix web ci
+RUN npm_config_target_arch=${TARGETARCH} npm ci && \
+    npm_config_target_arch=${TARGETARCH} npm --prefix web ci
 
 # 复制源码
 COPY tsconfig.json ./
