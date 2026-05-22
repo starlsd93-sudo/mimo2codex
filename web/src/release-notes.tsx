@@ -14,7 +14,7 @@
 // CTA that navigates straight to it.
 
 import type { ReactNode } from "react";
-import { RobotOutlined } from "@ant-design/icons";
+import { RobotOutlined, GlobalOutlined } from "@ant-design/icons";
 
 export interface BilingualText {
   en: string;
@@ -49,30 +49,42 @@ export interface ReleaseNote {
 // lives in doc/tag-log.{md,zh.md} for users who want the full history.
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
-    version: "0.4.4",
-    date: "2026-05-21",
+    version: "0.4.5",
+    date: "2026-05-22",
     title: {
-      en: "AI documentation assistant on mimodoc",
-      zh: "官网新增 AI 文档助手",
+      en: "Proxy support",
+      zh: "代理的支持",
     },
     highlights: [
       {
         kind: "new",
-        icon: <RobotOutlined />,
+        icon: <GlobalOutlined />,
         title: {
-          en: "Ask the AI on mimodoc.chengj.online",
-          zh: "不懂的常见问题，问 AI 小助手",
+          en: "HTTP_PROXY / HTTPS_PROXY / NO_PROXY for outbound calls",
+          zh: "HTTP_PROXY / HTTPS_PROXY / NO_PROXY 让 mimo2codex 走代理",
         },
         description: {
-          en: "The official docs site now has an AI assistant float (bottom-right robot). For common configuration questions — first-time setup, why-502, generic-provider wiring, etc. — drop the question and the assistant agent-loops over the project docs and streams a markdown answer. Supports image upload (paste / drag a config screenshot) for MiMo V2.5 to diagnose visually. Thinking trace shows in a collapsible panel above each answer.",
-          zh: "官网右下角新增 AI 文档助手浮球。常见配置问题 —— 第一次怎么配、为什么 502、通用 provider 怎么接 —— 直接问，助手在项目文档上跑 agent 检索，流式给出 markdown 回答。支持上传配置截图（粘贴 / 拖拽），MiMo V2.5 多模态直接看图诊断。每个回答上方有可折叠的思考过程面板。",
+          en: "Set HTTP_PROXY / HTTPS_PROXY in your shell, .env, or docker-compose environment and mimo2codex's upstream fetches route through it — same behavior as curl. NO_PROXY excludes are honored too. The startup banner shows a `proxy:` line that echoes the active configuration so env-detection is verifiable at a glance, and upstream-failure logs include the underlying cause code (ECONNREFUSED / ENOTFOUND / ETIMEDOUT) for easier diagnosis. Opt-out via MIMO2CODEX_NO_PROXY_FROM_ENV=1 (useful when your shell keeps HTTPS_PROXY set for curl/git but the proxy can't reach the upstream).",
+          zh: "在 shell / .env / docker-compose 的 environment 段设置 HTTP_PROXY / HTTPS_PROXY 即可，mimo2codex 向上游的请求会走该代理，行为与 curl 一致，NO_PROXY 排除列表也支持。启动 banner 多一行 `proxy:` 回显当前生效的代理，env 是否被识别一眼能看到；上游失败日志补上具体的错误码（ECONNREFUSED / ENOTFOUND / ETIMEDOUT），出问题不用再凭五个字猜。如果不想让 mimo2codex 跟着 shell 里的代理 env 走（典型场景：代理出口在境外、上游是国内域名），设 MIMO2CODEX_NO_PROXY_FROM_ENV=1 关掉。",
         },
         location: {
-          en: "mimodoc.chengj.online → bottom-right 🤖 float",
-          zh: "mimodoc.chengj.online → 右下角 🤖 浮球",
+          en: "docker-compose.yml environment: / .env / shell export — startup banner shows the active proxy",
+          zh: "docker-compose.yml environment: / .env / shell export —— 启动 banner 会回显当前代理",
         },
-        ctaLabel: { en: "Try it", zh: "去试试" },
-        ctaHref: "https://mimodoc.chengj.online/",
+        ctaLabel: { en: "Proxy FAQ", zh: "代理 FAQ" },
+        ctaHref: "https://github.com/7as0nch/mimo2codex/blob/main/doc/proxy-faq.zh.md",
+      },
+      {
+        kind: "improved",
+        icon: <RobotOutlined />,
+        title: {
+          en: "Clearer upstream-failure diagnostics",
+          zh: "上游连接失败日志更易定位",
+        },
+        description: {
+          en: "The WARN line on upstream connect failure now carries the underlying error code and cause message alongside the top-level 'fetch failed'. The 502 response body to your client also includes the code. ECONNREFUSED on the proxy port vs ENOTFOUND on the upstream domain are now distinguishable at a glance.",
+          zh: "上游连接失败的 WARN 日志现在带上 underlying error code 和 cause message，不只是顶层的 'fetch failed'。返回给客户端的 502 错误信息里也包含这些细节。代理端口 ECONNREFUSED 还是上游域名 ENOTFOUND，一眼能区分。",
+        },
       },
     ],
   },

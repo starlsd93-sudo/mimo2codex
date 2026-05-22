@@ -27,7 +27,13 @@ import {
 import { runUpdate } from "./setup/runUpdate.js";
 import { printLogo } from "./util/logo.js";
 import { printBoxedBanner } from "./util/cliBanner.js";
+import { detectColorLevel, fg, BOLD, RESET } from "./util/cliColor.js";
 import { logFirstRunBannerIfNeeded } from "./auth/bootstrap.js";
+import {
+  installProxyDispatcherFromEnv,
+  redactProxyUrl,
+  type ProxyStatus,
+} from "./upstream/proxyDispatcher.js";
 
 // Discover the data-dir path WITHOUT creating it. Used for print-config /
 // print-cc-switch subcommands so a one-shot snippet print doesn't have
@@ -344,10 +350,49 @@ function checkMimoHostMismatch(cfg: Config): string | null {
   return null;
 }
 
+// Render the banner's `proxy:` row with state-aware coloring. Uses the same
+// fg() helper as the box border + snippet body so we get the truecolor /
+// 256-color / no-color tiered fallback for free. Returns a pre-colored string
+// (or plain ASCII at level 0); cliBanner.visibleWidth strips ANSI before
+// computing padding so alignment is unaffected.
+function colorProxyLine(proxyStatus: ProxyStatus): string {
+  let body: string;
+  let r: number;
+  let g: number;
+  let b: number;
+  if (proxyStatus.enabled) {
+    const parts: string[] = [];
+    if (proxyStatus.httpsProxy) parts.push(`HTTPS_PROXY=${redactProxyUrl(proxyStatus.httpsProxy)}`);
+    if (proxyStatus.httpProxy && proxyStatus.httpProxy !== proxyStatus.httpsProxy) {
+      parts.push(`HTTP_PROXY=${redactProxyUrl(proxyStatus.httpProxy)}`);
+    }
+    if (proxyStatus.noProxy) parts.push(`NO_PROXY=${proxyStatus.noProxy}`);
+    body = parts.join("  ");
+    // #00D75F — bright green: proxy is active, your config took effect.
+    [r, g, b] = [0x00, 0xd7, 0x5f];
+  } else if (proxyStatus.reason === "opted-out") {
+    body = "disabled (MIMO2CODEX_NO_PROXY_FROM_ENV=1)";
+    // #FFAF00 — amber: you explicitly opted out, worth double-checking.
+    [r, g, b] = [0xff, 0xaf, 0x00];
+  } else {
+    body = "direct (no HTTPS_PROXY / HTTP_PROXY in env)";
+    // #00D7FF — bright cyan: informational baseline, no action needed.
+    [r, g, b] = [0x00, 0xd7, 0xff];
+  }
+  const level = detectColorLevel();
+  const tint = fg(r, g, b, level);
+  // Bold tightens the eye-catch without changing color; both wrappers degrade
+  // to "" at level 0, so the plain-text path stays identical to before.
+  const open = level > 0 ? `${BOLD}${tint}` : "";
+  const close = level > 0 ? RESET : "";
+  return `${open}proxy:       ${body}${close}`;
+}
+
 function printStartupBanner(
   cfg: Config,
   target: SnippetTarget,
-  autoLoadedEnv: { path: string; loaded: string[] } | null
+  autoLoadedEnv: { path: string; loaded: string[] } | null,
+  proxyStatus: ProxyStatus
 ): void {
   // Collect every runtime status line first, then frame the whole block in
   // a rounded box. Width is content-driven so the right border always aligns.
@@ -361,6 +406,13 @@ function printStartupBanner(
   lines.push(`provider:    ${cfg.defaultProviderId}`);
   lines.push(`upstream:    ${cfg.baseUrl}`);
   lines.push(`api key:     ${redactKey(cfg.apiKey)}`);
+  // Proxy line: always print so users can confirm at a glance whether
+  // outbound calls are going direct vs through a proxy. Color-coded per
+  // state — enabled→green (active), direct→cyan (info), opted-out→amber
+  // (caution). Picks are pure-ish 6×6×6 cube cells so the 256-color fallback
+  // on Apple Terminal stays distinguishable. fg() returns "" at level 0 so
+  // pipes / CI / NO_COLOR strip cleanly.
+  lines.push(colorProxyLine(proxyStatus));
   const mismatch = checkMimoHostMismatch(cfg);
   if (mismatch) {
     lines.push(`⚠ 警告:      ${mismatch}`);
@@ -568,6 +620,13 @@ async function main(): Promise<void> {
 
   setVerbose(cfg.verbose);
 
+  // Install undici proxy dispatcher from env BEFORE any fetch happens (update
+  // check, upstream calls, etc.). With no HTTP_PROXY/HTTPS_PROXY in env this
+  // is a no-op so the default-no-proxy user is unaffected. Opt-out via
+  // MIMO2CODEX_NO_PROXY_FROM_ENV=1 for users who keep proxy env vars set for
+  // curl/git but don't want mimo2codex to follow.
+  const proxyStatus = installProxyDispatcherFromEnv(process.env);
+
   if (cfg.adminEnabled) {
     try {
       openDb(cfg.dataDir);
@@ -581,7 +640,7 @@ async function main(): Promise<void> {
     }
   }
 
-  printStartupBanner(cfg, resolveSnippetTarget(parsed.model), autoLoadedEnv);
+  printStartupBanner(cfg, resolveSnippetTarget(parsed.model), autoLoadedEnv, proxyStatus);
 
   // Update-check: gated by --no-update-check / env / settings. Strategy:
   //   1. CLI restart is rare and explicit — the user is sitting at the

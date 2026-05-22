@@ -57,6 +57,24 @@ async function readSnippet(res: Response): Promise<string | undefined> {
   }
 }
 
+// Native fetch surfaces a generic "fetch failed" Error; the actionable detail
+// (ECONNREFUSED / ENOTFOUND / ETIMEDOUT / EHOSTUNREACH, plus the address that
+// failed) lives on err.cause from undici. Expose both so logs and the 502
+// payload can name the underlying cause — critical for proxy / network bugs.
+interface FetchErrorDetail {
+  error: string;
+  cause?: string;
+  code?: string;
+}
+function describeFetchError(err: unknown): FetchErrorDetail {
+  const e = err as Error & { cause?: { code?: string; message?: string } };
+  return {
+    error: e.message,
+    cause: e.cause?.message,
+    code: e.cause?.code,
+  };
+}
+
 function defaultErrorCode(status: number): string {
   if (status === 401) return "authentication_error";
   if (status === 403) return "permission_denied";
@@ -134,14 +152,17 @@ async function postUpstream(
     res = await attempt();
   } catch (err) {
     if ((err as Error).name === "AbortError") throw err;
-    log.warn("upstream connect failed, retrying once", { error: (err as Error).message });
+    log.warn("upstream connect failed, retrying once", describeFetchError(err));
     try {
       res = await attempt();
     } catch (err2) {
+      const detail = describeFetchError(err2);
       throw new UpstreamError({
         status: 502,
         code: "upstream_unreachable",
-        message: `failed to reach upstream: ${(err2 as Error).message}`,
+        message: detail.code
+          ? `failed to reach upstream: ${detail.error} (${detail.code}${detail.cause ? `: ${detail.cause}` : ""})`
+          : `failed to reach upstream: ${detail.error}`,
       });
     }
   }

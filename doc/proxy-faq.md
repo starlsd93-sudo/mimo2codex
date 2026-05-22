@@ -28,7 +28,16 @@ Each hop has its own failure modes:
 - **① Client → mimo2codex**: loopback, almost never the problem. If port `8788` is busy or mimo2codex isn't running, the client sees `ECONNREFUSED` — **not 502**.
 - **② mimo2codex → upstream**: the source of most 502 / `ETIMEDOUT` / `ENOTFOUND` errors.
 
-**Key fact**: Node.js's built-in global `fetch` **does not honor your system proxy**. Toggling "system proxy" in macOS settings or in Clash / V2Ray has no effect on mimo2codex. To route mimo2codex through a proxy, set `HTTPS_PROXY` / `HTTP_PROXY` explicitly (see below).
+**Key fact (v0.4.5+)**: mimo2codex **reads** `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` env vars on startup and routes its upstream fetch through them — same behavior as `curl` / `git`. But **"system proxy" ≠ "process proxy"**: toggling the "System Proxy" switch in macOS Settings, Clash for Mac, Clash for Windows, Surge, V2RayN, etc. **does not** auto-export these env vars to the mimo2codex process. To route mimo2codex through a proxy, **explicitly export** `HTTPS_PROXY` / `HTTP_PROXY` (see §3.2 / §4.2) — or declare them in the `environment:` section of `docker-compose.yml` for Docker deployments.
+
+> 🩺 **Self-check**: mimo2codex's startup banner always prints a `proxy:` line. Read it:
+> - **`proxy: HTTPS_PROXY=http://...`** → env recognised, outbound calls go through that proxy. If you're still hitting 502, the failure is in the proxy → upstream hop, not env-detection. Jump to §5.
+> - **`proxy: direct (no HTTPS_PROXY / HTTP_PROXY in env)`** → env wasn't passed to the mimo2codex process; all outbound calls go direct. If upstream needs a proxy, go back and `export` it (or fix `docker-compose.yml` `environment:` / systemd unit `Environment=`), then restart mimo2codex.
+> - **`proxy: disabled (MIMO2CODEX_NO_PROXY_FROM_ENV=1)`** → you explicitly opted out; outbound calls go direct even if `HTTPS_PROXY` is set.
+>
+> This single line resolves the most common variant of "I toggled my proxy's system-proxy switch but mimo2codex still 502s."
+>
+> Want mimo2codex to ignore proxy env vars even when they're present (e.g. your shell exports `HTTPS_PROXY` for `curl` / `git` but it can't reach mimo2codex's upstream)? Set `MIMO2CODEX_NO_PROXY_FROM_ENV=1`.
 
 ---
 
@@ -172,12 +181,26 @@ Match the exact text you see in the client / terminal.
 ### `unexpected status 502 Bad Gateway` (same as issue #21)
 
 - **Meaning**: mimo2codex is running and listening, but **both** attempts at the outbound HTTPS call to upstream failed (mimo2codex retries once internally).
+- **First check**: does the startup banner show a `proxy:` line?
+  - **Banner shows proxy enabled** → mimo2codex is routing through your proxy; the failure is in the proxy → upstream hop or upstream itself.
+  - **No `proxy:` line** → mimo2codex is going direct. Either upstream needs a proxy and your env vars weren't exported (most common), or upstream is genuinely down / blocked.
 - **Likely causes** (in order of frequency):
-  1. Upstream provider outage — verify with `curl` from section 3.3 / 4.3.
-  2. Missing proxy for an overseas upstream / wrong proxy port → check `HTTPS_PROXY`.
-  3. Corporate firewall / VPN blocking it → toggle off briefly to compare.
-  4. DNS poisoning / IPv6 problems → launch with `NODE_OPTIONS=--dns-result-order=ipv4first`.
-  5. TLS-intercepting corporate proxy → see `DEPTH_ZERO_SELF_SIGNED_CERT` below.
+  1. Upstream needs proxy but env vars weren't exported to the mimo2codex process — most common with Clash/Surge "system proxy" toggle. See §1's self-check.
+  2. Upstream provider outage — verify with `curl` from section 3.3 / 4.3.
+  3. Wrong proxy port / proxy not running → see `ECONNREFUSED <proxy-host>:<proxy-port>` below.
+  4. Corporate firewall / VPN blocking it → toggle off briefly to compare.
+  5. DNS poisoning / IPv6 problems → launch with `NODE_OPTIONS=--dns-result-order=ipv4first`.
+  6. TLS-intercepting corporate proxy → see `DEPTH_ZERO_SELF_SIGNED_CERT` below.
+- Starting v0.4.5, the `WARN upstream connect failed` log line carries the underlying cause code (e.g. `code: 'ECONNREFUSED'`, `'ENOTFOUND'`, `'ETIMEDOUT'`) — use that to triangulate quickly instead of guessing.
+
+### `ECONNREFUSED <proxy-host>:<proxy-port>` (in the upstream log)
+
+- **Meaning**: mimo2codex tried to dial the proxy you configured via `HTTPS_PROXY` / `HTTP_PROXY` and got no listener on that host:port.
+- **Common causes**: typo in the port, proxy app not running, proxy bound only to `127.0.0.1` while mimo2codex (in Docker) is on a different network.
+- **Check**:
+  - Verify the proxy is actually listening: `lsof -iTCP -P | grep <port>` (mac) / `Get-NetTCPConnection -LocalPort <port>` (win).
+  - Try `curl -v -x http://<proxy>:<port> https://upstream.example.com/` from the same host (or inside the same Docker network) — if curl fails the same way, fix the proxy side first.
+  - **Docker gotcha**: `HTTPS_PROXY=http://127.0.0.1:7890` doesn't work inside a container — `127.0.0.1` is the container itself. Use `host.docker.internal` (mac/win) or the host's LAN IP.
 
 ### `connect ECONNREFUSED 127.0.0.1:8788`
 

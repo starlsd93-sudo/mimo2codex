@@ -17,6 +17,14 @@ mimo2codex 的版本发布历史，按 tag 倒序排列。
 
 ---
 
+## (v0.4.5 — 2026-05-22)
+
+- **[new]** **代理的支持**：mimo2codex 出站请求支持 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` 环境变量，行为与 `curl` / `git` 一致。Docker 部署在 `docker-compose.yml` 的 `environment:` 段声明，本地在 shell / `.env` 里 `export` 都可以。启动 banner 多一行 `proxy:` 回显当前生效的代理，env 是否被识别一眼能看到。`MIMO2CODEX_NO_PROXY_FROM_ENV=1` 可让 mimo2codex 无视代理 env（适合 shell 里为 `curl` / `git` 常驻了代理、但不想让 mimo2codex 跟着走的场景）。
+- **[opt]** 上游连接失败的日志补上 underlying cause 的 `code` 和 `message`（如 `ECONNREFUSED` / `ENOTFOUND` / `ETIMEDOUT`），同样的细节注入到 502 的 `UpstreamError.message`，代理端口写错、DNS 解析失败、超时这些情况一眼能分辨。
+- **[doc]** proxy-faq §1 改写：明确"系统代理 ≠ 进程代理"——Clash / Surge 等 UI 里点的"系统代理"开关不会自动导出 env；新增 🩺 自检 callout 让用户从启动 banner 一眼看出当前代理状态。§5 新增 `ECONNREFUSED <代理-host>:<代理-port>` 一行（含 Docker 里 `127.0.0.1` 的坑）。
+
+---
+
 ## v0.4.4 — 2026-05-21
 
 - **[new]** **官网新增 AI 文档助手 ([mimodoc.chengj.online](https://mimodoc.chengj.online/))**：右下角机器人浮球 —— 常见配置问题（第一次怎么配、为什么 502、通用 provider 怎么接）点开就能问。助手在项目 `doc/*.md` 上跑 tool calling agent 循环检索文档，流式渲染 markdown 回答。思考过程展示在答案上方的可折叠面板里（开始出答案时自动收拢）。接通了 MiMo V2.5 多模态 —— 粘贴 / 拖拽 / 点回形针上传配置截图，AI 直接看图诊断。聊天历史按匿名 client_id 存 localStorage，drawer 头部有「清空对话」按钮。

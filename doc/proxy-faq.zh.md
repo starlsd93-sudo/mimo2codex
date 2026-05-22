@@ -28,7 +28,16 @@ mimo2codex 在 Mac / Windows 上跑起来后，最常踩的坑不是程序本身
 - **① 客户端 → mimo2codex**：本地回环，几乎不出问题。除非 `8788` 端口被占用或 mimo2codex 没启动 —— 此时客户端报 `ECONNREFUSED`，**不是 502**。
 - **② mimo2codex → 上游 API**：502 / `ETIMEDOUT` / `ENOTFOUND` 等错误的主要发源地。
 
-**关键事实**：Node.js 内置的全局 `fetch` **不会自动用系统代理**。你在系统设置或 Clash / V2Ray 里点了"系统代理"，对 mimo2codex 也不生效。要让 mimo2codex 走代理，必须显式设 `HTTPS_PROXY` / `HTTP_PROXY` 环境变量，详见后文。
+**关键事实（v0.4.5+）**：mimo2codex 启动时**会读** `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` 环境变量，把上游 fetch 路由到代理 —— 行为与 `curl` / `git` 一致。但**"系统代理" ≠ "进程代理"**：你在 macOS 系统设置、Clash for Mac / Clash for Windows / Surge / V2RayN 等 UI 里点的"系统代理"开关**不会**自动把这几个 env 导出给 mimo2codex 进程。要让 mimo2codex 走代理，得**显式 `export`** `HTTPS_PROXY` / `HTTP_PROXY`（见 §3.2 / §4.2）—— Docker 部署就在 `docker-compose.yml` 的 `environment:` 段声明。
+
+> 🩺 **自检**：mimo2codex 启动 banner 永远会打一行 `proxy:`，看这行的内容：
+> - **`proxy: HTTPS_PROXY=http://...`** → env 已识别，出站请求会走该代理。还 502 说明问题在代理 → 上游这一跳，跟 env 识别无关，去 §5 查错误码。
+> - **`proxy: direct (no HTTPS_PROXY / HTTP_PROXY in env)`** → env 没传进 mimo2codex 进程，出站走直连。如果上游需要代理，回去把 `export` / `docker-compose.yml` `environment:` / systemd unit 的 `Environment=` 检查一遍并重启 mimo2codex。
+> - **`proxy: disabled (MIMO2CODEX_NO_PROXY_FROM_ENV=1)`** → 你显式 opt-out 了，即便 env 里有 `HTTPS_PROXY` 也走直连。
+>
+> 这一行能解掉历史上最多的"我点了 Clash 系统代理但 mimo2codex 还是 502"投诉。
+>
+> 想让 mimo2codex 即便看到 env 里的代理变量也不走代理（典型场景：你 shell 里为 `curl` / `git` 常驻了 `HTTPS_PROXY`，但代理到不了上游）？设置 `MIMO2CODEX_NO_PROXY_FROM_ENV=1` 即可关掉本特性。
 
 ---
 
@@ -172,12 +181,26 @@ Get-Content $env:USERPROFILE\.mimo2codex\mimo2codex.log -Tail 50 -ErrorAction Si
 ### `unexpected status 502 Bad Gateway`（issue #21 同款）
 
 - **含义**：mimo2codex 进程在跑、HTTP 监听正常，但出站访问上游 API 失败两次（mimo2codex 内置重试 1 次）。
+- **先看启动 banner 有没有 `proxy:` 行**：
+  - **有**：mimo2codex 已经在走你配置的代理，失败点在代理 → 上游这一跳，或上游本身。
+  - **没有**：mimo2codex 走直连。要么上游需要代理但 env 没传进进程（最常见），要么上游真不可达 / 被封。
 - **可能原因（按概率排序）**：
-  1. 上游服务方临时故障 → 用第 3.3 / 4.3 节里的 `curl` 直连验证。
-  2. 海外服务漏配代理 / 代理端口写错 → 检查 `HTTPS_PROXY`。
-  3. 公司防火墙 / VPN 阻断 → 临时关掉对照测试。
-  4. DNS 污染 / IPv6 不通 → 启动 mimo2codex 时加 `NODE_OPTIONS=--dns-result-order=ipv4first`。
-  5. 走的是 TLS-MITM 的企业代理 → 看下文 `DEPTH_ZERO_SELF_SIGNED_CERT` 那条。
+  1. 上游需要代理但 env 没传进 mimo2codex 进程 —— 最典型是 Clash/Surge 只点了"系统代理"开关。按 §1 的自检走一遍。
+  2. 上游服务方临时故障 → 用 §3.3 / §4.3 里的 `curl` 直连验证。
+  3. 代理端口写错 / 代理软件没起 → 看下面 `ECONNREFUSED <代理-host>:<代理-port>` 那条。
+  4. 公司防火墙 / VPN 阻断 → 临时关掉对照测试。
+  5. DNS 污染 / IPv6 不通 → 启动 mimo2codex 时加 `NODE_OPTIONS=--dns-result-order=ipv4first`。
+  6. 走的是 TLS-MITM 的企业代理 → 看下文 `DEPTH_ZERO_SELF_SIGNED_CERT` 那条。
+- 自 v0.4.5 起，`WARN upstream connect failed` 这条日志会带上 underlying cause 的 code（如 `code: 'ECONNREFUSED'` / `'ENOTFOUND'` / `'ETIMEDOUT'`），可以直接据此定位，不用再凭 `fetch failed` 五个字猜。
+
+### `ECONNREFUSED <代理-host>:<代理-port>`（出现在 upstream 日志里）
+
+- **含义**：mimo2codex 按你配的 `HTTPS_PROXY` / `HTTP_PROXY` 去拨代理，但那个 host:port 没人监听。
+- **常见原因**：端口写错、代理软件没启动、代理只监听 `127.0.0.1` 而 mimo2codex（Docker 部署）在另一个网络命名空间。
+- **自查**：
+  - 确认代理在监听：`lsof -iTCP -P | grep <port>`（mac）/ `Get-NetTCPConnection -LocalPort <port>`（win）。
+  - 在同一台主机（或同一个 Docker 网络里）用 `curl -v -x http://<proxy>:<port> https://upstream.example.com/` 直连测一下，curl 也不通就先修代理这一侧。
+  - **Docker 坑**：`HTTPS_PROXY=http://127.0.0.1:7890` 在容器里指的是容器自己，不是宿主。要写 `host.docker.internal`（mac/win）或宿主的 LAN IP。
 
 ### `connect ECONNREFUSED 127.0.0.1:8788`
 

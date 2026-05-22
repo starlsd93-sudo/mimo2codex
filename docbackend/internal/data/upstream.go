@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -231,6 +232,17 @@ func (u *UpstreamClient) StreamChat(
 		if err != nil {
 			if err == io.EOF {
 				break
+			}
+			// Distinguish "user gave up" from "stream actually broke". If the
+			// request context is gone, the client (browser fetch + abort
+			// controller) hung up; net/http surfaces that as context.Canceled
+			// on the next Read. Return whatever we accumulated so callers can
+			// persist a partial answer, and let them recognise the cause via
+			// errors.Is(err, context.Canceled).
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				result.Content = contentBuf.String()
+				result.ReasoningContent = reasoningBuf.String()
+				return result, context.Canceled
 			}
 			return nil, fmt.Errorf("read upstream stream: %w", err)
 		}

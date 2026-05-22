@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -352,6 +353,13 @@ func (u *AskUsecase) Stream(ctx context.Context, in AskInput, onEvent AskEventHa
 			},
 		)
 		if err != nil {
+			// User aborted the SSE stream (closed drawer / clicked stop /
+			// navigated away). Not a real failure — quit the agent loop, let
+			// the deferred AskLog save whatever partial content we already
+			// streamed, and DON'T mark the row as errored.
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
 			persistedErrMsg = err.Error()
 			return fmt.Errorf("%w: %v", ErrInternal, err)
 		}

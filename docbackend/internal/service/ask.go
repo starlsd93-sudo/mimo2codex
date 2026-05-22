@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -94,6 +95,14 @@ func (s *AskService) HandleAsk(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
+		// If the client connection was already gone (user closed the drawer
+		// or aborted the fetch), there's nothing to emit — writing to a dead
+		// socket only churns logs. biz/ask.go already treats context.Canceled
+		// as a graceful exit (returns nil), so we shouldn't actually get
+		// here for that case; the check is belt + braces.
+		if errors.Is(err, context.Canceled) || r.Context().Err() != nil {
+			return
+		}
 		// Validation / rate-limit errors are safe to expose verbatim. For
 		// upstream / internal errors we surface the wrapped message so the
 		// frontend can show something actionable — masking everything as
@@ -104,6 +113,11 @@ func (s *AskService) HandleAsk(w http.ResponseWriter, r *http.Request) {
 		} else {
 			emit(map[string]string{"error": err.Error()})
 		}
+		return
+	}
+	// Skip the final "done" frame if the client already hung up — same
+	// reasoning as above.
+	if r.Context().Err() != nil {
 		return
 	}
 	emit(map[string]bool{"done": true})

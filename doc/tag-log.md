@@ -17,6 +17,14 @@ Release history of mimo2codex, newest first.
 
 ---
 
+## (v0.4.5 — 2026-05-22)
+
+- **[new]** **Proxy support**: mimo2codex's outbound calls honor `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` env vars — same behavior as `curl` / `git`. Declare them in `docker-compose.yml`'s `environment:` for Docker, or `export` from your shell / `.env` for local runs. The startup banner gains a `proxy:` line that echoes the active proxy so env-detection is verifiable at a glance. `MIMO2CODEX_NO_PROXY_FROM_ENV=1` opts out (for users whose shell keeps `HTTPS_PROXY` set for `curl`/`git` but don't want mimo2codex to follow).
+- **[opt]** Upstream connect-failure logs carry the underlying cause's `code` and `message` (e.g. `ECONNREFUSED` / `ENOTFOUND` / `ETIMEDOUT`); the same detail flows into the 502 `UpstreamError.message`, making proxy-port typos, DNS failures, and timeouts distinguishable at a glance.
+- **[doc]** Proxy FAQ §1 rewritten to spell out "system proxy ≠ process proxy" — Clash / Surge's "system proxy" toggle doesn't auto-export env vars. New 🩺 self-check callout turns the banner's `proxy:` line into a one-glance diagnostic. §5 gains an `ECONNREFUSED <proxy-host>:<proxy-port>` row (including the Docker `127.0.0.1` gotcha).
+
+---
+
 ## v0.4.4 — 2026-05-21
 
 - **[new]** **AI documentation assistant on the official docs site ([mimodoc.chengj.online](https://mimodoc.chengj.online/))**: click the bottom-right robot float — drop any common configuration question (first-time setup, why-502, generic-provider wiring, etc.) and the assistant runs a tool-calling agent loop over the project's `doc/*.md` corpus, returning a streamed markdown answer. The reasoning trace is shown in a collapsible "thinking" panel above the answer (auto-collapses once the answer starts). MiMo V2.5 multimodal is wired in — paste / drag / click the paperclip to upload a config screenshot and the AI looks at it before answering. Chat history lives in localStorage per anonymous browser id; clear-conversation button in the drawer header. 
