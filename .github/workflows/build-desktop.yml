@@ -28,16 +28,21 @@ jobs:
             target: win
             sidecar_platform: win32
           # Both Mac arch flavors are built on the same Apple Silicon runner.
-          # macos-14 → arm64 = native; macos-14 → x64 = cross-build (electron-builder
+          # macos-15 → arm64 = native; macos-15 → x64 = cross-build (electron-builder
           # handles this fine since 24.x). macos-13 (Intel) is intentionally NOT
           # used — free-tier capacity is poor and jobs sit in the queue for hours.
           # Smoke-testing the x64 build on an arm64 host is impossible, but the
           # produced .dmg + .zip can be verified on any Intel Mac post-release.
-          - os: macos-14
+          # macos-14 was tried first — its hdiutil produced UDZO dmg files that
+          # passed SHA verification but failed to mount on consumer Macs ("此电脑
+          # 不能读取你连接的磁盘"). macos-15 has a newer hdiutil that doesn't
+          # exhibit this bug; combined with electron-builder.yml `format: ULFO`
+          # the resulting dmg mounts reliably.
+          - os: macos-15
             arch: x64
             target: mac
             sidecar_platform: darwin
-          - os: macos-14
+          - os: macos-15
             arch: arm64
             target: mac
             sidecar_platform: darwin

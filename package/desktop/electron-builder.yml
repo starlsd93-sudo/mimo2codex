@@ -56,6 +56,14 @@ mac:
     NSHumanReadableCopyright: "© 2026 chengj"
 
 dmg:
+  # ULFO (LZFSE) is more robust than the default UDZO on macOS Sonoma+.
+  # UDZO has known cases of producing technically-valid-but-unmountable
+  # images on CI hdiutil versions; ULFO is the modern recommendation and
+  # supported back to macOS 10.11.
+  format: ULFO
+  # Skip writeUpdateInfo — we don't have an electron-updater pipeline and
+  # generating it has caused null-channel crashes before.
+  writeUpdateInfo: false
   window:
     width: 540
     height: 380
