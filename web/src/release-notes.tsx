@@ -14,7 +14,6 @@
 // CTA that navigates straight to it.
 
 import type { ReactNode } from "react";
-import { RobotOutlined, GlobalOutlined } from "@ant-design/icons";
 
 export interface BilingualText {
   en: string;
