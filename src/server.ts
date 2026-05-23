@@ -382,7 +382,7 @@ async function handleResponses(
   log.debug("incoming POST /v1/responses", {
     model: payload.model,
     stream: !!payload.stream,
-    hasInput: Array.isArray(payload.input) ? payload.input.length : "n/a",
+    hasInput: Array.isArray(payload.input) ? payload.input.length : (typeof payload.input === "string" ? payload.input.length : "n/a"),
     hasInstructions: typeof payload.instructions === "string" ? payload.instructions.length : 0,
     keys: Object.keys(payload),
   });
@@ -393,7 +393,9 @@ async function handleResponses(
   // translation would forward `messages: []` to the upstream, which 400s.
   // Detect the probe shape (no input, no instructions) and answer with a
   // synthetic 200 without burning an upstream call.
-  const hasInput = Array.isArray(payload.input) && payload.input.length > 0;
+  const hasInput =
+    (typeof payload.input === "string" && payload.input.length > 0) ||
+    (Array.isArray(payload.input) && payload.input.length > 0);
   const hasInstructions = typeof payload.instructions === "string" && payload.instructions.length > 0;
   if (!hasInput && !hasInstructions) {
     log.debug("matched probe shape — returning synthetic 200 without upstream call");
