@@ -1,6 +1,7 @@
 import { app, shell } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
+import * as http from "node:http";
 import { initLogger, log } from "./logger.js";
 import { needsFirstRunSetup } from "./firstRun.js";
 import { openSettings } from "./windows/settings.js";
@@ -9,6 +10,35 @@ import { findFreePort } from "./portProbe.js";
 import { loadRuntime, saveRuntime } from "./runtime.js";
 import { sidecarPaths } from "./paths.js";
 import { notifyCrash } from "./notifier.js";
+
+/**
+ * Poll http://127.0.0.1:{port}/admin/ until the sidecar's HTTP server is
+ * actually listening (not just spawned). Returns true when ready, false on
+ * timeout. The CLI's `spawn` returning doesn't mean the HTTP server is bound —
+ * import resolution + SQLite init + Express routing takes 0.5-3s, and the
+ * variance is enough that a fixed setTimeout slams loadURL before the socket
+ * accepts. See ERR_CONNECTION_REFUSED reports.
+ */
+async function waitForSidecarHttp(port: number, timeoutMs = 30_000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const ok = await new Promise<boolean>((resolve) => {
+      const req = http.request(
+        { host: "127.0.0.1", port, path: "/admin/", method: "HEAD", timeout: 1500 },
+        (res) => {
+          resolve((res.statusCode ?? 0) < 500);
+          res.resume();
+        }
+      );
+      req.on("error", () => resolve(false));
+      req.on("timeout", () => { req.destroy(); resolve(false); });
+      req.end();
+    });
+    if (ok) return true;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return false;
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -107,15 +137,24 @@ async function main(): Promise<void> {
   const { createTray, updateStatus } = await import("./tray.js");
 
   const openAdminWhenReady = (): void => {
-    // Tiny delay so the sidecar's HTTP listener is actually up
-    setTimeout(() => {
+    // Poll the admin endpoint until it accepts connections, THEN open the
+    // BrowserWindow. A fixed setTimeout was racing the sidecar's HTTP listen
+    // on Mac (CLI startup ~1-3s) — see ERR_CONNECTION_REFUSED reports.
+    void (async () => {
       const st = sidecar.status();
-      if (st.kind === "running") {
-        void import("./windows/adminWebview.js").then(({ openAdminWindow }) =>
-          openAdminWindow(st.port)
-        );
+      if (st.kind !== "running") return;
+      const ready = await waitForSidecarHttp(st.port);
+      if (!ready) {
+        log.warn("sidecar HTTP not ready within timeout; admin UI not auto-opened", { port: st.port });
+        return;
       }
-    }, 800);
+      // Re-check status — sidecar might've crashed during our poll.
+      const final = sidecar.status();
+      if (final.kind !== "running") return;
+      void import("./windows/adminWebview.js").then(({ openAdminWindow }) =>
+        openAdminWindow(final.port)
+      );
+    })();
   };
 
   const openSettingsWindow = () => openSettings({
