@@ -378,6 +378,8 @@ function toolToChat(t: ResponsesTool, opts: ReqToChatOpts): ChatTool | ChatTool[
   //    we've seen in the wild:
   //       { type: "namespace", name?: string, tools?: Tool[] }
   //    Recurse into nested tools and flatten. If there's no nested array, drop.
+  //    Tool names stay unprefixed; the namespace is re-attached in the response
+  //    translation (respToResponses / streamToSse) so Codex Desktop can route.
   if (t.type === "namespace") {
     const ns = t as { name?: string; tools?: ResponsesTool[] };
     if (!Array.isArray(ns.tools) || ns.tools.length === 0) {

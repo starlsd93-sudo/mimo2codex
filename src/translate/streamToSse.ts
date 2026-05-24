@@ -23,6 +23,10 @@ export interface StreamToSseOpts {
    * 不会泄漏。MiniMax / GLM-thinking 等 inline-thinking 上游必开。
    */
   extractInlineThink?: boolean;
+  /**
+   * tool name → namespace name 映射（同 RespToResponsesOpts.namespaceMap）。
+   */
+  namespaceMap?: Map<string, string>;
 }
 
 interface ToolCallState {
@@ -62,11 +66,13 @@ class StreamState {
   // minimax-compat: 流式 <think>...</think> 切分器。null 时本路径关闭，
   // delta.content 原样进 message 通道（既有行为）。
   thinkSplitter: ReturnType<typeof createInlineThinkSplitter> | null = null;
+  namespaceMap: Map<string, string> | undefined;
 
   constructor(req: ResponsesRequest, opts: StreamToSseOpts) {
     this.req = req;
     this.model = req.model;
     this.exposeReasoning = opts.exposeReasoning;
+    this.namespaceMap = opts.namespaceMap;
     if (opts.extractInlineThink) {
       this.thinkSplitter = createInlineThinkSplitter();
     }
@@ -201,16 +207,19 @@ function openToolCall(
     argsEmitted: false,
   };
   state.toolCalls.set(index, tc);
+  const addedItem: ResponsesOutputItem & { namespace?: string } = {
+    id: itemId,
+    type: "function_call",
+    call_id: callId,
+    name: tc.name,
+    arguments: "",
+    status: "in_progress",
+  };
+  const ns = tc.name ? state.namespaceMap?.get(tc.name) : undefined;
+  if (ns) addedItem.namespace = ns;
   emit(sink, state, "response.output_item.added", {
     output_index: outputIndex,
-    item: {
-      id: itemId,
-      type: "function_call",
-      call_id: callId,
-      name: tc.name,
-      arguments: "",
-      status: "in_progress",
-    },
+    item: addedItem,
   });
   return tc;
 }
@@ -298,7 +307,7 @@ function finalizeToolCalls(sink: SseSink, state: StreamState): void {
       output_index: tc.outputIndex,
       arguments: tc.argsBuffer,
     });
-    const finalItem: ResponsesOutputItem = {
+    const finalItem: ResponsesOutputItem & { namespace?: string } = {
       id: tc.itemId,
       type: "function_call",
       call_id: tc.callId,
@@ -306,6 +315,8 @@ function finalizeToolCalls(sink: SseSink, state: StreamState): void {
       arguments: tc.argsBuffer,
       status: "completed",
     };
+    const ns = tc.name ? state.namespaceMap?.get(tc.name) : undefined;
+    if (ns) finalItem.namespace = ns;
     state.finalOutput.push(finalItem);
     emit(sink, state, "response.output_item.done", {
       output_index: tc.outputIndex,

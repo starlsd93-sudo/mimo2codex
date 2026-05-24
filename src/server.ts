@@ -352,6 +352,26 @@ function rewriteWarning(notice: { from: string; to: string; reason: string }): {
   };
 }
 
+/**
+ * 从 Codex 请求的 tools 数组中提取 namespace 映射：toolName → namespaceName。
+ * Codex Desktop 期望响应中的 function_call 带 namespace 字段才能路由到正确 handler。
+ */
+function buildNamespaceMap(payload: ResponsesRequest): Map<string, string> | undefined {
+  if (!payload.tools || payload.tools.length === 0) return undefined;
+  const map = new Map<string, string>();
+  for (const t of payload.tools) {
+    if (t.type === "namespace") {
+      const ns = t as unknown as { name?: string; tools?: Array<{ name?: string }> };
+      if (ns.name && Array.isArray(ns.tools)) {
+        for (const inner of ns.tools) {
+          if (inner.name) map.set(inner.name, ns.name);
+        }
+      }
+    }
+  }
+  return map.size > 0 ? map : undefined;
+}
+
 async function handleResponses(
   cfg: Config,
   req: IncomingMessage,
@@ -461,6 +481,8 @@ async function handleResponses(
   chat.stream = !!payload.stream;
   const stream = !!payload.stream;
 
+  const namespaceMap = buildNamespaceMap(payload);
+
   const ac = new AbortController();
   req.on("close", () => ac.abort());
 
@@ -505,6 +527,7 @@ async function handleResponses(
         // 仅当 provider 声明开了（generic provider 的 features.minimaxCompat 或
         // features.extractThinkTags），其他 provider 这里是 undefined → 既有行为。
         extractInlineThink: !!provider.responseFlags?.extractInlineThink,
+        namespaceMap,
       });
       sendJson(res, 200, responses);
       recordLog(cfg, {
@@ -620,6 +643,7 @@ async function handleResponses(
         exposeReasoning: cfg.exposeReasoning,
         // minimax-compat: 同 respToResponses 调用点，对 inline-think 上游开启切分。
         extractInlineThink: !!provider.responseFlags?.extractInlineThink,
+        namespaceMap,
       }
     );
   } catch (err) {

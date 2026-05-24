@@ -21,6 +21,12 @@ export interface RespToResponsesOpts {
    * inline-thinking 上游必开；否则 thinking 文本会泄漏给 Codex 当作 assistant 文本显示。
    */
   extractInlineThink?: boolean;
+  /**
+   * tool name → namespace name 映射。Codex Desktop 的 namespace 工具（如
+   * multi_agent_v1 下的 spawn_agent）在响应中需要带 namespace 字段，否则客户端
+   * 无法路由到正确的 handler（报 unsupported call）。
+   */
+  namespaceMap?: Map<string, string>;
 }
 
 function mapUsage(u: ChatResponse["usage"]): ResponsesUsage | null {
@@ -104,14 +110,17 @@ export function respToResponses(
 
   if (message?.tool_calls && message.tool_calls.length > 0) {
     for (const tc of message.tool_calls) {
-      output.push({
+      const item: ResponsesOutputItem & { namespace?: string } = {
         type: "function_call",
         id: newFunctionCallId(),
         call_id: tc.id,
         name: tc.function.name,
         arguments: tc.function.arguments,
         status: "completed",
-      });
+      };
+      const ns = opts.namespaceMap?.get(tc.function.name);
+      if (ns) item.namespace = ns;
+      output.push(item);
     }
   }
 
