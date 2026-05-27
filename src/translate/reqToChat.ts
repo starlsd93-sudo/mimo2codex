@@ -15,6 +15,7 @@ import type {
   ResponsesFunctionCallOutputItem,
   ResponsesInputItem,
   ResponsesMessageItem,
+  ResponsesMcpTool,
   ResponsesRequest,
   ResponsesTool,
   ResponsesToolChoice,
@@ -405,12 +406,148 @@ function toolToChat(t: ResponsesTool, opts: ReqToChatOpts): ChatTool | ChatTool[
     return null;
   }
 
-  // 6. Truly unknown — warn once per type so we get a heads-up but don't spam.
+  // 6. OpenAI Responses-API `mcp` tool — Codex Desktop connector plugins and
+  //    user-configured remote MCP servers both share this type, distinguished
+  //    by `connector_id` (first-party, OpenAI-hosted) vs `server_url` (BYO).
+  //    Chat-Completions providers (MiMo / DeepSeek / SenseNova / ...) do not
+  //    implement OpenAI's MCP runtime, so we drop these — but the drop must
+  //    be visible and kind-classified so users can diagnose. See issue #39 +
+  //    doc/connector-plugins.md.
+  if (t.type === "mcp") {
+    return mcpToolToChat(t as ResponsesMcpTool);
+  }
+
+  // 7. Codex Desktop's `tool_search` builtin (issue #41) — deferred-tool
+  //    discovery via BM25 over tool metadata. Shape is essentially a
+  //    function tool (`description` + `parameters`) with `execution: "client"`,
+  //    meaning Codex Desktop handles the call locally and returns the
+  //    matching tools in the next turn. We translate it to a regular
+  //    `function` tool with name="tool_search" so upstream models can
+  //    invoke it; the function_call comes back, Codex Desktop executes
+  //    client-side, and the discovered tools enter the next request's
+  //    tools[] naturally.
+  if (t.type === "tool_search") {
+    const ts = t as {
+      description?: string;
+      parameters?: Record<string, unknown>;
+    };
+    const fn: { name: string; description?: string; parameters?: Record<string, unknown> } = {
+      name: "tool_search",
+    };
+    if (typeof ts.description === "string") fn.description = ts.description;
+    if (ts.parameters && typeof ts.parameters === "object") fn.parameters = ts.parameters;
+    return { type: "function", function: fn };
+  }
+
+  // 8. Truly unknown — keep the WARN short so non-technical users don't get
+  //    spooked; the (redacted) payload goes to DEBUG only. Set
+  //    MIMO2CODEX_VERBOSE=1 to surface it when reporting an issue.
   warnOnce(
     t.type,
-    `dropping unsupported tool type "${t.type}" — please open an issue if this should be translated`
+    `dropping unknown tool type "${t.type}" — harmless; if this should be supported, set MIMO2CODEX_VERBOSE=1 and report at https://github.com/7as0nch/mimo2codex/issues`
+  );
+  log.debug(`unknown tool "${t.type}" payload: ${JSON.stringify(redactToolPayload(t))}`);
+  return null;
+}
+
+// MCP / Codex-Desktop-connector handling. Three kinds, three log levels:
+//   - connector_id (first-party):  silent → DEBUG. The advisory system note
+//     injected at the call site already tells the upstream model the tool is
+//     unavailable, so a WARN would be redundant log noise for end users.
+//   - server_url (remote MCP):     WARN. Phase B bridging not yet implemented,
+//     so the user genuinely loses the tool without compensating UX. Short msg.
+//   - neither field set:           WARN. Edge case, kept terse.
+function mcpToolToChat(t: ResponsesMcpTool): ChatTool | ChatTool[] | null {
+  const label = t.server_label ?? t.connector_id ?? t.server_url ?? "(unnamed)";
+  if (t.connector_id) {
+    log.debug(
+      `mcp first-party connector "${label}" dropped — advisory system note injected to upstream model. See doc/connector-plugins.md.`
+    );
+    return null;
+  }
+  if (t.server_url) {
+    warnOnce(
+      `mcp:remote-mcp:${label}`,
+      `remote MCP tool "${label}" dropped — bridging not yet supported. See doc/connector-plugins.md.`
+    );
+    return null;
+  }
+  warnOnce(
+    `mcp:unknown:${label}`,
+    `mcp tool "${label}" dropped — neither connector_id nor server_url set.`
   );
   return null;
+}
+
+// Phase C of issue #39: scan req.tools for `mcp + connector_id` entries
+// (first-party Codex Desktop connector plugins — GitHub / Canva / HeyGen /
+// Dropbox / Gmail / Google Drive / ...) and return their user-visible labels.
+// Used to build the system-prompt advisory note injected into the chat
+// request so the upstream model knows the connectors aren't actually callable.
+function collectFirstPartyConnectorLabels(tools: ResponsesTool[]): string[] {
+  const labels: string[] = [];
+  for (const t of tools) {
+    if ((t as { type?: string }).type !== "mcp") continue;
+    const m = t as ResponsesMcpTool;
+    if (typeof m.connector_id !== "string" || m.connector_id.length === 0) continue;
+    labels.push(m.server_label ?? m.connector_id);
+  }
+  return labels;
+}
+
+// Known first-party connectors → suggested CLI equivalent. Matched on
+// substrings (case-insensitive) of the label so e.g. "GitHub", "github",
+// "GitHub-something" all map to `gh`. The model gets a concrete fallback
+// instead of vague advice.
+const CONNECTOR_CLI_HINTS: Array<{ pattern: RegExp; hint: string }> = [
+  { pattern: /github/i, hint: "`gh` (GitHub CLI: https://cli.github.com)" },
+  { pattern: /(gmail|google[\s_-]?drive|google[\s_-]?docs)/i, hint: "`rclone` or Google's official CLI tools" },
+  { pattern: /dropbox/i, hint: "`rclone` or the `dropbox` CLI" },
+  { pattern: /(canva|heygen)/i, hint: "their REST API via `curl` (user provides their own API key)" },
+];
+
+function buildConnectorAdvisoryNote(labels: string[]): string {
+  const list = labels.map((l) => `"${l}"`).join(", ");
+  const hintLines: string[] = [];
+  const seenHints = new Set<string>();
+  for (const label of labels) {
+    for (const { pattern, hint } of CONNECTOR_CLI_HINTS) {
+      if (pattern.test(label) && !seenHints.has(hint)) {
+        seenHints.add(hint);
+        hintLines.push(`  - for ${label}: ${hint}`);
+      }
+    }
+  }
+  const hintBlock =
+    hintLines.length > 0
+      ? `\nSuggested command-line alternatives:\n${hintLines.join("\n")}`
+      : "";
+  return (
+    `Note from the mimo2codex proxy: the user has the following Codex Desktop connector plugin(s) ` +
+    `enabled — ${list} — but these are NOT available through this proxy. ` +
+    `The upstream provider does not implement OpenAI's MCP runtime, so no tool exists for them. ` +
+    `If the user requests functionality that would normally use one of these connectors:\n` +
+    `1. Tell the user the connector is unavailable through mimo2codex.\n` +
+    `2. Suggest they either disable it in Codex Desktop → Settings → Plugins, or have you run a shell command-line equivalent (you have the shell tool available for this).\n` +
+    `3. Do not pretend to call the connector — there is no tool available for it, and any attempted call will fail.${hintBlock}\n` +
+    `If the user's actual request can be handled with the shell tool alone, proceed normally without mentioning this note.`
+  );
+}
+
+// Keys that must never reach the log verbatim. Matched case-insensitively
+// because some upstreams capitalize differently (Authorization vs authorization,
+// apiKey vs api_key vs API_KEY). Applied recursively into nested objects and
+// arrays so deeply-buried OAuth tokens still get scrubbed.
+const SECRET_KEY_RE =
+  /^(authorization|api[_-]?key|token|secret|password|access[_-]?token|refresh[_-]?token|client[_-]?secret|bearer)$/i;
+function redactToolPayload(t: unknown): unknown {
+  if (t === null || typeof t !== "object") return t;
+  if (Array.isArray(t)) return t.map(redactToolPayload);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(t as Record<string, unknown>)) {
+    out[k] = SECRET_KEY_RE.test(k) ? "***" : redactToolPayload(v);
+  }
+  return out;
 }
 
 // Defensive dedup at the tool merge site (issue #20).
@@ -742,12 +879,43 @@ export function reqToChat(req: ResponsesRequest, opts: ReqToChatOpts = {}): Chat
 
   if (req.tools && req.tools.length > 0) {
     const mapped: ChatTool[] = [];
+    let droppedCount = 0;
     for (const t of req.tools) {
       const r = toolToChat(t, opts);
-      if (Array.isArray(r)) mapped.push(...r);
-      else if (r) mapped.push(r);
+      if (Array.isArray(r)) {
+        if (r.length === 0) droppedCount++;
+        else mapped.push(...r);
+      } else if (r) {
+        mapped.push(r);
+      } else {
+        droppedCount++;
+      }
+    }
+    // Note: a previous version emitted a summary WARN when every tool got
+    // dropped. Removed — Phase C's advisory system note handles connector
+    // cases, single per-type WARNs handle the rest. The summary was log
+    // noise for non-technical users.
+    if (droppedCount > 0 && mapped.length === 0) {
+      log.debug(
+        `all ${req.tools.length} client tool(s) were filtered out — upstream will see no tools.`
+      );
     }
     if (mapped.length > 0) chat.tools = dedupeToolsByName(mapped);
+
+    // Phase C of issue #39: when first-party Codex Desktop connectors are
+    // present (mcp + connector_id), inject a developer/system-prompt
+    // advisory note so the upstream model doesn't generate phantom calls
+    // to non-existent tools. The model is told to acknowledge the
+    // limitation when relevant and fall back to `shell` + a CLI
+    // equivalent instead — preventing Codex Desktop's "unsupported call"
+    // error path entirely. Remote MCP (server_url, no connector_id) is
+    // intentionally NOT covered here — that's Phase B's bridging job.
+    const connectorLabels = collectFirstPartyConnectorLabels(req.tools);
+    if (connectorLabels.length > 0) {
+      const note = buildConnectorAdvisoryNote(connectorLabels);
+      const insertAt = req.instructions ? 1 : 0;
+      messages.splice(insertAt, 0, { role: "system", content: note });
+    }
   }
   const tc = toolChoiceToChat(req.tool_choice);
   if (tc !== undefined) chat.tool_choice = tc;

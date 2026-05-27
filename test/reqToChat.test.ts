@@ -2,9 +2,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { reqToChat, MIXED_MODE_REASONING_PLACEHOLDER } from "../src/translate/reqToChat.js";
 import type { ResponsesRequest } from "../src/translate/types.js";
+import { log } from "../src/util/log.js";
 
 describe("reqToChat", () => {
   it("instructions-only request becomes a single system message", () => {
@@ -1553,6 +1554,487 @@ describe("reqToChat — orphan tool message scrub (PR #10 regression)", () => {
       role: "assistant",
       content: "",
       reasoning_content: "thinking…",
+    });
+  });
+
+  // Issue #39: Codex Desktop's connector plugins (GitHub / Canva / HeyGen /
+  // Dropbox / Gmail / Google Drive / ...) send `tool.type === "mcp"` over
+  // the Responses API. First-party connectors carry `connector_id`;
+  // user-configured remote MCP servers carry `server_url`. Chat-Completions
+  // upstreams (MiMo / DeepSeek / SenseNova / ...) don't implement MCP, so
+  // mimo2codex drops these tools — but the drop must be VISIBLE and the
+  // warn must explain the kind so users know how to react.
+  //
+  // The fallback warn for genuinely-unknown tool types must also include a
+  // redacted payload so the next time someone reports a brand-new tool
+  // shape we have it pre-instrumented in their log.
+  describe("mcp / connector plugin tools (issue #39)", () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+    let debugSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      warnSpy = vi.spyOn(log, "warn").mockImplementation(() => {});
+      debugSpy = vi.spyOn(log, "debug").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      warnSpy.mockRestore();
+      debugSpy.mockRestore();
+    });
+
+    const allWarnText = (): string =>
+      warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const allDebugText = (): string =>
+      debugSpy.mock.calls.map((c) => String(c[0])).join("\n");
+
+    it("first-party connector (connector_id) is dropped silently — no user-visible WARN (the advisory system note handles it)", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          {
+            type: "mcp",
+            server_label: "GitHub",
+            connector_id: "connector_github",
+            authorization: "shhh-oauth-token-do-not-leak-001",
+            require_approval: "never",
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      expect(chat.tools).toBeUndefined();
+      const warnText = allWarnText();
+      // No WARN-level noise — connector is silent at WARN level.
+      expect(warnText).not.toMatch(/connector/i);
+      expect(warnText).not.toMatch(/mcp/i);
+      // Optionally surfaced at DEBUG for maintainers using MIMO2CODEX_VERBOSE=1.
+      const debugText = allDebugText();
+      expect(debugText).toMatch(/GitHub/);
+      // OAuth token must never appear — neither WARN nor DEBUG.
+      expect(warnText).not.toContain("shhh-oauth-token-do-not-leak-001");
+      expect(debugText).not.toContain("shhh-oauth-token-do-not-leak-001");
+    });
+
+    it("remote MCP server (server_url) is dropped with a short WARN (Phase B bridging not yet shipped)", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          {
+            type: "mcp",
+            server_label: "my-mcp-issue39-srv",
+            server_url: "https://mcp.issue39.example.com/v1",
+            authorization: "Bearer secret-bearer-issue39-002",
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      expect(chat.tools).toBeUndefined();
+      const text = allWarnText();
+      expect(text).toMatch(/remote MCP tool/);
+      expect(text).toMatch(/my-mcp-issue39-srv/);
+      expect(text).not.toContain("secret-bearer-issue39-002");
+    });
+
+    it("truly unknown tool type → short WARN (no payload); payload goes to DEBUG only", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          {
+            type: "totally_unknown_v2_test_xyz",
+            authorization: "secret-token-do-not-leak-abc",
+            api_key: "ak-leak-test-zzz",
+            visible_field: "should-be-visible",
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      expect(chat.tools).toBeUndefined();
+      const warnText = allWarnText();
+      // WARN is short: names the type, does NOT include payload.
+      expect(warnText).toMatch(/totally_unknown_v2_test_xyz/);
+      expect(warnText).not.toMatch(/payload/);
+      // DEBUG has the redacted payload for issue reports.
+      const debugText = allDebugText();
+      expect(debugText).toMatch(/totally_unknown_v2_test_xyz/);
+      expect(debugText).toMatch(/payload/);
+      expect(debugText).toMatch(/"authorization":"\*\*\*"/);
+      expect(debugText).toMatch(/"api_key":"\*\*\*"/);
+      expect(debugText).toContain("should-be-visible");
+      // Secrets must never leak — neither channel.
+      expect(warnText).not.toContain("secret-token-do-not-leak-abc");
+      expect(debugText).not.toContain("secret-token-do-not-leak-abc");
+      expect(warnText).not.toContain("ak-leak-test-zzz");
+      expect(debugText).not.toContain("ak-leak-test-zzz");
+    });
+
+    it("nested secrets inside unknown tool payload are also redacted (in DEBUG)", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          {
+            type: "future_nested_type_qqq",
+            metadata: {
+              client_secret: "nested-secret-do-not-leak-qq",
+              harmless: "fine-to-show",
+            },
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      reqToChat(req);
+      const warnText = allWarnText();
+      const debugText = allDebugText();
+      expect(warnText).not.toContain("nested-secret-do-not-leak-qq");
+      expect(debugText).not.toContain("nested-secret-do-not-leak-qq");
+      expect(debugText).toMatch(/"client_secret":"\*\*\*"/);
+      expect(debugText).toContain("fine-to-show");
+    });
+
+    it("mcp + function mixed → only function survives; the function tool's name passes through", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          {
+            type: "mcp",
+            server_label: "Canva-mixed-test",
+            connector_id: "connector_canva_mixedtest",
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+          { type: "function", name: "shell_mixed_test", parameters: { type: "object" } },
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      expect(chat.tools).toHaveLength(1);
+      const fn = chat.tools![0] as { type: string; function: { name: string } };
+      expect(fn.type).toBe("function");
+      expect(fn.function.name).toBe("shell_mixed_test");
+    });
+
+    it("all-mcp (first-party) request → silent at WARN level (advisory note covers it; no summary noise)", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          {
+            type: "mcp",
+            server_label: "HeyGen-alldrop-A",
+            connector_id: "connector_heygen_alldrop_a",
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+          {
+            type: "mcp",
+            server_label: "HeyGen-alldrop-B",
+            connector_id: "connector_heygen_alldrop_b",
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      expect(chat.tools).toBeUndefined();
+      const warnText = allWarnText();
+      // Removed by design — advisory note + per-type handling are enough.
+      expect(warnText).not.toMatch(/all \d+ client tool\(s\)/);
+      expect(warnText).not.toMatch(/were dropped/);
+      // Phase C advisory note is still injected (verified separately in the
+      // "mcp first-party-connector advisory note" describe block below).
+    });
+  });
+
+  // Phase C of issue #39: first-party Codex Desktop connectors (GitHub /
+  // Canva / HeyGen / Dropbox / Gmail / Google Drive — `mcp` + `connector_id`)
+  // physically can't be bridged by a third-party proxy. To avoid the model
+  // generating phantom calls to non-existent tools (which Codex Desktop
+  // would then surface as "unsupported call"), we inject a system-prompt
+  // advisory note when these connectors are present, naming each one and
+  // telling the model to fall back to `shell` + a CLI equivalent.
+  describe("mcp first-party-connector advisory note (issue #39 Phase C)", () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      warnSpy = vi.spyOn(log, "warn").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      warnSpy.mockRestore();
+    });
+
+    const findAdvisorySysMsg = (
+      chat: ReturnType<typeof reqToChat>
+    ): { role: "system"; content: string } | undefined => {
+      return chat.messages.find(
+        (m): m is { role: "system"; content: string } =>
+          m.role === "system" &&
+          typeof m.content === "string" &&
+          m.content.includes("connector plugin")
+      );
+    };
+
+    it("connector_id present → injects a system advisory naming the connector with shell-fallback guidance", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          {
+            type: "mcp",
+            server_label: "GitHub-phaseC-test",
+            connector_id: "connector_github_phasec",
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      const advisory = findAdvisorySysMsg(chat);
+      expect(advisory).toBeDefined();
+      expect(advisory!.content).toMatch(/GitHub-phaseC-test/);
+      // Should tell the model what to do instead of pretending the connector works.
+      expect(advisory!.content).toMatch(/shell/i);
+      // Should explicitly forbid pretending to call the connector.
+      expect(advisory!.content).toMatch(/do not pretend|do not attempt|no tool/i);
+    });
+
+    it("multiple connector_ids → single advisory lists ALL connectors", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          {
+            type: "mcp",
+            server_label: "GitHub-multi-A",
+            connector_id: "connector_github_multi_a",
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+          {
+            type: "mcp",
+            server_label: "Canva-multi-B",
+            connector_id: "connector_canva_multi_b",
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+          {
+            type: "mcp",
+            server_label: "HeyGen-multi-C",
+            connector_id: "connector_heygen_multi_c",
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      const allSystem = chat.messages
+        .filter((m) => m.role === "system")
+        .map((m) => (typeof m.content === "string" ? m.content : ""))
+        .join(" | ");
+      // exactly one advisory system message
+      const advisoryCount = chat.messages.filter(
+        (m) =>
+          m.role === "system" &&
+          typeof m.content === "string" &&
+          m.content.includes("connector plugin")
+      ).length;
+      expect(advisoryCount).toBe(1);
+      expect(allSystem).toMatch(/GitHub-multi-A/);
+      expect(allSystem).toMatch(/Canva-multi-B/);
+      expect(allSystem).toMatch(/HeyGen-multi-C/);
+    });
+
+    it("connector_id WITH req.instructions → advisory inserted right after instructions", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        instructions: "You are a helpful coding agent named Probe-PhaseC.",
+        input: "x",
+        tools: [
+          {
+            type: "mcp",
+            server_label: "Dropbox-insertpos-test",
+            connector_id: "connector_dropbox_insertpos",
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      // First message MUST be the original instructions (preserve user prompt).
+      expect(chat.messages[0]).toEqual({
+        role: "system",
+        content: "You are a helpful coding agent named Probe-PhaseC.",
+      });
+      // Second message MUST be the connector advisory.
+      const second = chat.messages[1];
+      expect(second.role).toBe("system");
+      expect(typeof second.content).toBe("string");
+      expect(second.content as string).toMatch(/connector plugin/);
+      expect(second.content as string).toMatch(/Dropbox-insertpos-test/);
+    });
+
+    it("connector_id WITHOUT req.instructions → advisory is the first message", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          {
+            type: "mcp",
+            server_label: "Gmail-noinstr-test",
+            connector_id: "connector_gmail_noinstr",
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      // First message: the advisory itself (no user instructions to slot after).
+      const first = chat.messages[0];
+      expect(first.role).toBe("system");
+      expect(typeof first.content).toBe("string");
+      expect(first.content as string).toMatch(/connector plugin/);
+      expect(first.content as string).toMatch(/Gmail-noinstr-test/);
+    });
+
+    it("server_url-only mcp (no connector_id) → NO advisory injected (Phase B's domain)", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          {
+            type: "mcp",
+            server_label: "selfhosted-mcp-noad",
+            server_url: "https://mcp.noad.example.com",
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      const advisory = findAdvisorySysMsg(chat);
+      expect(advisory).toBeUndefined();
+    });
+
+    it("no mcp tools at all → NO advisory injected", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          { type: "function", name: "shell_nophasec", parameters: { type: "object" } },
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      const advisory = findAdvisorySysMsg(chat);
+      expect(advisory).toBeUndefined();
+    });
+
+    it("connector_id + function tool → advisory present AND function tool survives", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          {
+            type: "mcp",
+            server_label: "Canva-mixed-phaseC",
+            connector_id: "connector_canva_mixed_phasec",
+          } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+          { type: "function", name: "shell_mixed_phaseC", parameters: { type: "object" } },
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      // Function tool survived.
+      expect(chat.tools).toHaveLength(1);
+      const fn = chat.tools![0] as { type: string; function: { name: string } };
+      expect(fn.function.name).toBe("shell_mixed_phaseC");
+      // Advisory present.
+      const advisory = findAdvisorySysMsg(chat);
+      expect(advisory).toBeDefined();
+      expect(advisory!.content).toMatch(/Canva-mixed-phaseC/);
+    });
+  });
+
+  // Issue #41: Codex Desktop sends a `tool_search` builtin that exposes
+  // deferred tools to the model via BM25 search. The tool is shaped like a
+  // standard function (name="tool_search", description, parameters) but uses
+  // `type: "tool_search"` + `execution: "client"` — Codex Desktop handles
+  // the call locally and returns matching tools in the next turn. Without
+  // explicit translation, mimo2codex drops it and the model can't discover
+  // any deferred tools; the downstream symptom is "dropped orphan tool
+  // message" warns when Codex Desktop returns function_call_outputs whose
+  // tool_call_ids never made it into our request history.
+  describe("tool_search tool (issue #41)", () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      warnSpy = vi.spyOn(log, "warn").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      warnSpy.mockRestore();
+    });
+
+    const realToolSearchPayload = {
+      type: "tool_search",
+      execution: "client",
+      description:
+        "# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Maximum number of tools to return (defaults to 8)." },
+          query: { type: "string", description: "Search query for deferred tools." },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    };
+
+    it("tool_search → translated to a function tool named \"tool_search\" with description + parameters preserved", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          realToolSearchPayload as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      expect(chat.tools).toHaveLength(1);
+      const fn = chat.tools![0] as {
+        type: string;
+        function: { name: string; description?: string; parameters?: Record<string, unknown> };
+      };
+      expect(fn.type).toBe("function");
+      expect(fn.function.name).toBe("tool_search");
+      expect(fn.function.description).toMatch(/Tool discovery/);
+      expect(fn.function.parameters).toEqual(realToolSearchPayload.parameters);
+    });
+
+    it("tool_search does NOT trigger the `unsupported tool type` fallback warn", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          realToolSearchPayload as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      reqToChat(req);
+      const allWarns = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(allWarns).not.toMatch(/unsupported tool type "tool_search"/);
+      expect(allWarns).not.toMatch(/all \d+ client tool\(s\) were dropped/);
+    });
+
+    it("tool_search alongside function + local_shell → all three survive, tool_search is one of them", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          realToolSearchPayload as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+          { type: "function", name: "spawn_agent_test_i41", parameters: { type: "object" } },
+          { type: "local_shell" } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      expect(chat.tools).toHaveLength(3);
+      const names = (chat.tools as Array<{ type: string; function?: { name?: string } }>)
+        .filter((t) => t.type === "function")
+        .map((t) => t.function?.name)
+        .sort();
+      expect(names).toEqual(["shell", "spawn_agent_test_i41", "tool_search"]);
+    });
+
+    it("tool_search without a description or parameters still translates without throwing", () => {
+      const req: ResponsesRequest = {
+        model: "mimo-v2.5-pro",
+        input: "x",
+        tools: [
+          { type: "tool_search" } as unknown as ResponsesRequest["tools"] extends Array<infer T> ? T : never,
+        ] as ResponsesRequest["tools"],
+      };
+      const chat = reqToChat(req);
+      expect(chat.tools).toHaveLength(1);
+      const fn = chat.tools![0] as { type: string; function: { name: string } };
+      expect(fn.function.name).toBe("tool_search");
     });
   });
 });

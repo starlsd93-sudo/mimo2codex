@@ -17,6 +17,14 @@ Release history of mimo2codex, newest first.
 
 ---
 
+## v0.5.4 — coming
+
+- **[new]** **Windows / macOS desktop app goes GA (no longer beta)**: after the beta-testing window that started with v0.4.8, the desktop app is now stable. Runs mimo2codex in the background; tray / menu-bar icon management; one-click admin UI; auto-update wired up. The CLI install (`npm install -g mimo2codex`) is unchanged and can coexist. Downloads: <https://mimodoc.chengj.online/download>.
+- **[fix]** **`tool_search` builtin now supported ([issue #41](https://github.com/7as0nch/mimo2codex/issues/41))**: Codex Desktop's deferred-tool-discovery tool was previously dropped as an unknown type, blocking deferred tool discovery and triggering cascading orphan warnings. It's now translated to a regular function tool — works normally.
+- **[fix]** **Connector plugins no longer fail with "unsupported call" ([issue #39](https://github.com/7as0nch/mimo2codex/issues/39))**: GitHub / Canva / HeyGen / Dropbox / Gmail / Google Drive connectors require OpenAI's backend-hosted MCP runtime, which a third-party proxy can't substitute for. mimo2codex now tells the upstream model — the model suggests `shell` + a CLI alternative (e.g. `gh` for GitHub) instead of failing.
+
+---
+
 ## (v0.4.10 — 2026-05-24)
 
 - **[fix]** **Codex Desktop namespace tools reporting `unsupported call` ([PR #34](https://github.com/7as0nch/mimo2codex/pull/34), [issue #33](https://github.com/7as0nch/mimo2codex/issues/33), thanks @meesii)**: Codex Desktop's namespace-wrapped tools (e.g. `spawn_agent` under `multi_agent_v1`) failed with `unsupported call` when routed through mimo2codex — the client uses the `namespace` field on each `function_call` output item to dispatch to the correct local handler, and the proxy was dropping it during translation. The fix builds a `toolName → namespaceName` map from the request's `tools` array and re-attaches `namespace` on both non-streaming (`respToResponses`) and streaming (`streamToSse`) outputs. Requests without namespace tools (MiMo / DeepSeek / plain Codex CLI) stay byte-identical.

@@ -9,6 +9,7 @@
   <a href="./doc/generic-providers.md">Generic Providers</a> ·
   <a href="./doc/codex-enable.md">Codex Enable</a> ·
   <a href="./doc/proxy-faq.md">Proxy FAQ</a> ·
+  <a href="./doc/connector-plugins.md">Connector Plugins</a> ·
   <a href="./doc/tag-log.md">Tag Log</a>
 </p>
 
@@ -23,9 +24,10 @@
 
 Local proxy that lets the **latest OpenAI Codex CLI / desktop** talk to virtually any modern LLM. Built-in support for **Xiaomi MiMo V2.5** and **DeepSeek V4 Pro**, plus a **generic provider mechanism** that connects any **OpenAI Chat Completions-compatible** (Qwen / GLM / Kimi / vLLM / Ollama / LM Studio …) or **native Responses API** (OpenAI itself) upstream — no code changes, no re-publish needed. Translates Codex's Responses API ↔ upstream Chat Completions on the fly, per-request routing by `model` field, optional admin web console, runs on `127.0.0.1`.
 
-> 🚀 **Coming v0.3.0 (GA)**: **Docker auth deployment** goes stable — user registration / login, per-user m2c API keys, BYOK, Gitee / GitHub OAuth, downloadable Codex config bundles. Put mimo2codex behind Docker / intranet / a small private circle without exposing your upstream key. Local single-user runs are unaffected (`authMode` defaults to `off`). See [doc/auth-deployment.md](./doc/auth-deployment.md).
->
-> ℹ️ v0.2.17 (2026-05-19) shipped the same feature as a **preview** — please use v0.3.0+ in production.
+> 🚀 **From v0.5.0 · three ways to run mimo2codex**:
+> 1. **One-line CLI install** — `npm install -g mimo2codex`, the classic path.
+> 2. **Docker deployment** — for intranet / team setups; ships with user login, BYOK, OAuth, downloadable Codex client config bundles; the upstream key never leaks. See [doc/auth-deployment.md](./doc/auth-deployment.md).
+> 3. **Windows / macOS desktop app** (recommended for non-technical users) — download an installer, runs in the background, starts on boot, no terminal required; one click from the tray / menu-bar opens the admin UI. Downloads: <https://mimodoc.chengj.online/download>.
 >
 > 📜 Full version history → **[doc/tag-log.md](./doc/tag-log.md)** (newest first; fix / feat / opt categorized).
 

@@ -17,6 +17,14 @@ mimo2codex 的版本发布历史，按 tag 倒序排列。
 
 ---
 
+## v0.5.4 — 待发布
+
+- **[new]** **Windows / macOS 桌面端正式发布（不再 beta）**：经过 v0.4.8 起的 beta 验证，桌面端转 GA。后台跑 mimo2codex、系统托盘 / 顶栏图标管理、admin UI 一键打开、自更新链路全部就绪。命令行版（`npm install -g mimo2codex`）依然不变，两者可共存。下载入口：<https://mimodoc.chengj.online/download>。
+- **[fix]** **`tool_search` 工具支持（[issue #41](https://github.com/7as0nch/mimo2codex/issues/41)）**：Codex Desktop 的延迟工具发现工具之前被当未知类型丢，模型发现不了延迟加载的工具，还会刷一串 orphan 警告。现在翻成普通 function 工具，恢复正常。
+- **[fix]** **Connector 插件不再报 "unsupported call"（[issue #39](https://github.com/7as0nch/mimo2codex/issues/39)）**：GitHub / Canva / HeyGen / Dropbox / Gmail / Google Drive 这些 connector 依赖 OpenAI 后端的 MCP 运行时，第三方代理实现不了。现在 mimo2codex 把这个情况告诉上游模型，模型会主动建议用 shell + 命令行替代（比如 GitHub 用 `gh`）。
+
+---
+
 ## (v0.4.10 — 2026-05-24)
 
 - **[fix]** **Codex Desktop namespace 工具报 `unsupported call`（[PR #34](https://github.com/7as0nch/mimo2codex/pull/34)，[issue #33](https://github.com/7as0nch/mimo2codex/issues/33)，感谢 @meesii）**：Codex Desktop 调用 namespace 包装的工具（如 `multi_agent_v1` 下的 `spawn_agent`）走 mimo2codex 代理时报 `unsupported call` —— 客户端依赖每个 `function_call` output item 上的 `namespace` 字段来路由到对应的本地 handler，而代理之前在翻译响应时把这个字段丢了。修复：从请求的 `tools` 数组抽出 `toolName → namespaceName` 映射，在非流式（`respToResponses`）和流式（`streamToSse`）两条响应路径上按需附加 `namespace` 字段。不带 namespace 工具的请求（MiMo / DeepSeek / 普通 Codex CLI 等）行为字节级保持一致。

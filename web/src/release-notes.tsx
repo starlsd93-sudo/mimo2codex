@@ -14,7 +14,7 @@
 // CTA that navigates straight to it.
 
 import type { ReactNode } from "react";
-import { DesktopOutlined } from "@ant-design/icons";
+import { ApiOutlined, DesktopOutlined } from "@ant-design/icons";
 
 export interface BilingualText {
   en: string;
@@ -49,45 +49,66 @@ export interface ReleaseNote {
 // lives in doc/tag-log.{md,zh.md} for users who want the full history.
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
-    version: "0.4.10",
-    date: "2026-05-24",
+    version: "0.5.4",
+    date: "2026-05-27",
     title: {
-      en: "Codex Desktop namespace tools now work end-to-end",
-      zh: "Codex Desktop 的 namespace / 子代理工具现在可正常调用",
+      en: "Windows / macOS desktop app GA + Codex Desktop fixes",
+      zh: "Windows / macOS 桌面端正式发布 + Codex Desktop 修复",
     },
     summary: {
-      en: "Fix for Codex Desktop's namespace-wrapped tool calls (e.g. multi_agent_v1 → spawn_agent) failing with \"unsupported call\". Other request flows are byte-identical. The Windows / macOS desktop preview (beta) is also still rolling out — grab it from the download page if you haven't.",
-      zh: "修复 Codex Desktop 调用 namespace 包装的工具（如 multi_agent_v1 下的 spawn_agent）报 \"unsupported call\" 的问题，其他请求流字节级不变。另：Windows / macOS 桌面预览（beta）还在持续推送，没装的同学可以去下载页拿一下。",
+      en: "Desktop app graduates from beta to GA. Plus three Codex Desktop tool-handling fixes.",
+      zh: "桌面端从 beta 转正式发布。另外三个 Codex Desktop 工具修复。",
     },
     highlights: [
-      {
-        kind: "fixed",
-        title: {
-          en: "Namespace tools no longer report \"unsupported call\" (PR #34, issue #33, thanks @meesii)",
-          zh: "namespace / 子代理工具不再报 \"unsupported call\"（PR #34，issue #33，感谢 @meesii）",
-        },
-        description: {
-          en: "Codex Desktop dispatches namespace-wrapped tools (e.g. spawn_agent under multi_agent_v1) using a `namespace` field on the function_call output item. The proxy was dropping that field during translation. Now we extract toolName→namespace from the request's tools array and re-attach it on both non-streaming and streaming responses. Requests without namespace tools are byte-identical to before.",
-          zh: "Codex Desktop 通过 function_call output item 上的 `namespace` 字段把 namespace 包装的工具（如 multi_agent_v1 下的 spawn_agent）路由到本地 handler，代理之前丢了这个字段。现在会从请求的 tools 抽出 toolName→namespace 映射，在非流式和流式响应上按需附加。不带 namespace 工具的请求行为与之前完全一致。",
-        },
-      },
       {
         kind: "new",
         icon: <DesktopOutlined />,
         title: {
-          en: "Reminder: Windows tray / macOS menu-bar desktop app (beta)",
-          zh: "提醒：Windows 系统托盘 / macOS 顶栏桌面端（beta）",
+          en: "Windows tray / macOS menu-bar desktop app — now GA",
+          zh: "Windows 系统托盘 / macOS 顶栏桌面端 —— 正式发布",
         },
         description: {
-          en: "If you haven't tried it yet — the optional companion app runs mimo2codex in the background, no terminal window required. First launch shows a small settings window to pick a provider + paste an API key; after that the tray / menu-bar icon opens the admin UI. The CLI install (`npm install -g mimo2codex`) is unchanged and can coexist. Still in beta — installer / launch / sidecar feedback welcome on the download page or via a GitHub issue.",
-          zh: "还没试过的话可以装一下 —— 可选的桌面壳子在后台跑 mimo2codex，不用一直挂终端。首次启动有个小设置窗让你选 provider 并粘贴 API Key；之后从系统托盘 / 顶栏图标一键打开 admin UI。命令行版（`npm install -g mimo2codex`）完全不变，两者可在同一台机器共存。仍在 beta —— 安装 / 启动 / sidecar 问题欢迎在下载页或 GitHub issue 反馈。",
+          en: "Beta tested since v0.4.8 — now stable. Runs mimo2codex in the background, tray / menu-bar icon manages the sidecar, one click opens the admin UI, auto-update wired up. The CLI install (`npm install -g mimo2codex`) is unchanged and can coexist.",
+          zh: "v0.4.8 起的 beta 验证完成，现在转正式发布。后台跑 mimo2codex，系统托盘 / 顶栏图标管理 sidecar，一键打开 admin UI，自更新就绪。命令行版（`npm install -g mimo2codex`）依然不变，两者可共存。",
         },
-        location: {
-          en: "Windows system tray / macOS menu bar — appears after install",
-          zh: "Windows 系统托盘 / macOS 顶栏 —— 安装完成后即可见",
-        },
-        ctaLabel: { en: "Download & feedback", zh: "下载体验 & 反馈" },
+        ctaLabel: { en: "Download", zh: "下载" },
         ctaHref: "https://mimodoc.chengj.online/download",
+      },
+      {
+        kind: "fixed",
+        icon: <ApiOutlined />,
+        title: {
+          en: "Connector plugins no longer fail (issue #39)",
+          zh: "Connector 插件不再失败（issue #39）",
+        },
+        description: {
+          en: "GitHub / Canva / HeyGen / Dropbox / Gmail / Google Drive connectors require OpenAI's backend MCP runtime, which a third-party proxy can't substitute for. The upstream model now suggests `shell` + a CLI alternative (e.g. `gh` for GitHub) instead of failing with \"unsupported call\".",
+          zh: "GitHub / Canva / HeyGen / Dropbox / Gmail / Google Drive 等 connector 依赖 OpenAI 后端的 MCP 运行时，第三方代理替代不了。上游模型现在会建议用 `shell` + 命令行替代（比如 GitHub 用 `gh`），不再报 \"unsupported call\"。",
+        },
+        ctaLabel: { en: "Details", zh: "详情" },
+        ctaHref: "https://github.com/7as0nch/mimo2codex/blob/main/doc/connector-plugins.md",
+      },
+      {
+        kind: "fixed",
+        title: {
+          en: "`tool_search` builtin supported (issue #41)",
+          zh: "`tool_search` 工具支持（issue #41）",
+        },
+        description: {
+          en: "Codex Desktop's deferred-tool-discovery tool was previously dropped as an unknown type. It's now translated to a function tool — works normally.",
+          zh: "Codex Desktop 的延迟工具发现工具之前被当未知类型丢弃。现在翻成 function 工具，恢复正常。",
+        },
+      },
+      {
+        kind: "fixed",
+        title: {
+          en: "Namespace tools fixed (PR #34, issue #33)",
+          zh: "Namespace 工具修复（PR #34，issue #33）",
+        },
+        description: {
+          en: "Codex Desktop's namespace-wrapped tools (e.g. spawn_agent under multi_agent_v1) no longer fail with \"unsupported call\".",
+          zh: "Codex Desktop 的 namespace 包装工具（如 multi_agent_v1 下的 spawn_agent）不再报 \"unsupported call\"。",
+        },
       },
     ],
   },

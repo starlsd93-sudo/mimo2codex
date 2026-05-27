@@ -104,7 +104,30 @@ export interface ResponsesBuiltinTool {
   [key: string]: unknown;
 }
 
-export type ResponsesTool = ResponsesFunctionTool | ResponsesBuiltinTool;
+// OpenAI Responses-API `mcp` tool (issue #39). Covers both Codex Desktop's
+// first-party connector plugins (GitHub / Canva / HeyGen / Dropbox / Gmail
+// / Google Drive / ...), distinguished by `connector_id`, and user-configured
+// remote MCP servers, distinguished by `server_url`. Chat-Completions
+// upstreams (MiMo / DeepSeek / SenseNova / ...) have no MCP equivalent, so
+// mimo2codex's handling lives in reqToChat#mcpToolToChat — see doc/connector-plugins.md.
+export interface ResponsesMcpTool {
+  type: "mcp";
+  server_label?: string;
+  /** First-party connector, e.g. "connector_github" / "connector_canva". */
+  connector_id?: string;
+  /** User-configured remote MCP server URL. */
+  server_url?: string;
+  /** OAuth Bearer token or similar credential — must be redacted before logging. */
+  authorization?: string;
+  /** "never" | "always" | { ... } — mimo2codex has no UI to ask, all variants act as "never". */
+  require_approval?: "never" | "always" | Record<string, unknown>;
+  /** Optional sub-tool allowlist on the MCP server. */
+  allowed_tools?: string[];
+  // Permit forward-compat fields we don't recognize yet.
+  [key: string]: unknown;
+}
+
+export type ResponsesTool = ResponsesFunctionTool | ResponsesMcpTool | ResponsesBuiltinTool;
 
 export type ResponsesToolChoice =
   | "auto"
